@@ -1025,14 +1025,14 @@ class SqlFormatter {
 
     private formatSelectQuery(stmtIndent: number): void {
         this.emitToken(this.advance()); // SELECT
-        this.emit(" ");
 
-        // DISTINCT / TOP N
+        // DISTINCT / TOP N - keep on SELECT line
         if (this.upper() === "DISTINCT") {
-            this.emitToken(this.advance());
             this.emit(" ");
+            this.emitToken(this.advance());
         }
         if (this.upper() === "TOP") {
+            this.emit(" ");
             this.emitToken(this.advance()); // TOP
             this.emit(" ");
             // Number or expression
