@@ -1,61 +1,70 @@
 {
-  "name": "tsql-formatter",
-  "displayName": "T-SQL Formatter",
-  "description": "A VS Code formatter extension for T-SQL.",
-  "version": "0.0.1",
-  "publisher": "jm1221",
-  "engines": {
-    "vscode": "^1.80.0"
-  },
-  "categories": [
-    "Formatters"
-  ],
-  "activationEvents": [
-    "onLanguage:sql"
-  ],
-  "main": "./out/extension.js",
-  "contributes": {
-    "configuration": {
-      "title": "T-SQL Formatter",
-      "properties": {
-        "tsqlFormatter.linesBetweenQueries": {
-          "type": "number",
-          "default": 2,
-          "minimum": 0,
-          "description": "Number of empty lines between instructions (SELECT, DELETE, UPDATE, INSERT, etc.)."
-        },
-        "tsqlFormatter.breakOnKeywords": {
-          "type": "boolean",
-          "default": true,
-          "description": "Break into a new line for keywords like WHERE, AND, OR, JOIN."
-        },
-        "tsqlFormatter.keywordCase": {
-          "type": "string",
-          "enum": ["upper", "lower", "preserve"],
-          "default": "preserve",
-          "description": "Keyword casing mode."
-        },
-        "tsqlFormatter.elementCase": {
-          "type": "string",
-          "enum": ["upper", "lower", "preserve", "matchTable"],
-          "default": "preserve",
-          "description": "Element casing mode for database/table/column names."
-        },
-        "tsqlFormatter.useBrackets": {
-          "type": "boolean",
-          "default": false,
-          "description": "Wrap element names in brackets []. Keywords and functions are never bracketed."
+    "name": "tsql-formatter",
+    "displayName": "T-SQL Formatter",
+    "description": "A VS Code formatter extension for T-SQL.",
+    "version": "0.0.1",
+    "publisher": "jm1221",
+    "engines": {
+        "vscode": "^1.80.0"
+    },
+    "categories": [
+        "Formatters"
+    ],
+    "activationEvents": [
+        "onLanguage:sql"
+    ],
+    "main": "./out/extension.js",
+    "contributes": {
+        "configuration": {
+            "title": "T-SQL Formatter",
+            "properties": {
+                "tsqlFormatter.linesBetweenQueries": {
+                    "type": "number",
+                    "default": 2,
+                    "minimum": 0,
+                    "description": "Number of empty lines between instructions (SELECT, DELETE, UPDATE, INSERT, etc.)."
+                },
+                "tsqlFormatter.breakOnKeywords": {
+                    "type": "boolean",
+                    "default": true,
+                    "description": "Break into a new line for keywords like WHERE, AND, OR, JOIN."
+                },
+                "tsqlFormatter.keywordCase": {
+                    "type": "string",
+                    "enum": [
+                        "upper",
+                        "lower",
+                        "preserve"
+                    ],
+                    "default": "preserve",
+                    "description": "Keyword casing mode."
+                },
+                "tsqlFormatter.elementCase": {
+                    "type": "string",
+                    "enum": [
+                        "upper",
+                        "lower",
+                        "preserve",
+                        "matchTable"
+                    ],
+                    "default": "preserve",
+                    "description": "Element casing mode for database/table/column names."
+                },
+                "tsqlFormatter.useBrackets": {
+                    "type": "boolean",
+                    "default": false,
+                    "description": "Wrap element names in brackets []. Keywords and functions are never bracketed."
+                }
+            }
         }
-      }
+    },
+    "scripts": {
+        "compile": "tsc -p ./",
+        "watch": "tsc -watch -p ./"
+    },
+    "devDependencies": {
+        "@types/node": "22.17.0",
+        "@types/vscode": "1.101.0",
+        "typescript": "5.9.3"
     }
-  },
-  "scripts": {
-    "compile": "tsc -p ./",
-    "watch": "tsc -watch -p ./"
-  },
-  "devDependencies": {
-    "@types/node": "22.17.0",
-    "@types/vscode": "1.101.0",
-    "typescript": "5.9.3"
-  }
 }
