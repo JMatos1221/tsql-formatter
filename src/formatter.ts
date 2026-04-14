@@ -204,6 +204,7 @@ const FUNCTIONS = new Set([
     "SUM",
     "AVG",
     "MIN",
+    "MAX",
     "COUNT_BIG",
     "GROUPING",
     "GROUPING_ID",
@@ -937,7 +938,9 @@ class SqlFormatter {
 
         // Table name and optional column list
         this.writeInlineUntil(
-            () => this.isWordAt(0, "VALUES", "SELECT", "EXEC", "EXECUTE") || this.isStatementStart(),
+            () =>
+                this.isWordAt(0, "VALUES", "SELECT", "EXEC", "EXECUTE") ||
+                this.isStatementStart(),
         );
 
         if (this.upper() === "VALUES") {
@@ -1578,7 +1581,7 @@ class SqlFormatter {
                 if (this.peek()?.type === "word") {
                     this.emitToken(this.advance()); // alias
                 }
-            } else if (!isKeywordLike(this.peek()!.value) || u === "AS") {
+            } else if (!isKeywordLike(this.peek()!.value)) {
                 this.emit(" ");
                 this.emitToken(this.advance()); // alias
             }
