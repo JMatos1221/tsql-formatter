@@ -49,11 +49,6 @@
                     ],
                     "default": "preserve",
                     "description": "Element casing mode for database/table/column names."
-                },
-                "tsqlFormatter.useBrackets": {
-                    "type": "boolean",
-                    "default": false,
-                    "description": "Wrap element names in brackets []. Keywords and functions are never bracketed."
                 }
             }
         }
