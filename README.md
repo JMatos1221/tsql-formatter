@@ -13,9 +13,9 @@ A VS Code extension that formats T-SQL statements.
 ## Development
 
 1. Install dependencies:
-    ```bash
-    npm install
-    ```
+   ```bash
+   npm install
+   ```
 2. Press `F5` in VS Code to launch an Extension Development Host.
 3. Open a SQL file and run **Format Document**.
 
