@@ -2082,7 +2082,7 @@ class SqlFormatter {
   private writeInlineCase(): void {
     this.emitToken(this.advance()); // CASE
     let depth = 1;
-    let prevToken: Token | null = { type: 'word', value: 'CASE' };
+    let prevToken: Token = { type: 'word', value: 'CASE' };
 
     while (!this.atEnd() && depth > 0) {
       const token = this.peek()!;
@@ -2143,7 +2143,8 @@ class SqlFormatter {
     this.indent = subIndent;
     // Emit any comment tokens that appear before SELECT
     while (this.peek()?.type === 'comment') {
-      this.emit(this.advance().value);
+      const cmt = this.advance();
+      this.emitCommentText(cmt.value);
       this.newLine(subIndent);
     }
     if (this.upper() === 'SELECT') {
