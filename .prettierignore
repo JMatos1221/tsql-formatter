@@ -1,0 +1,13 @@
+# Dependencies
+node_modules/
+
+# Build outputs
+build/
+out/
+
+# Public static assets (not authored source)
+public/
+
+# Minified files
+*.min.js
+*.min.css
