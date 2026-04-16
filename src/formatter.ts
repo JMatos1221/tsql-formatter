@@ -891,7 +891,31 @@ class SqlFormatter {
     return token.value;
   }
 
+  // --- Comment emission ---
+
+  // Safely emit comment text, handling multi-line block comments by splitting
+  // on embedded newlines so that currentLine tracking stays correct.
+  private emitCommentText(text: string): void {
+    if (!text.includes('\n')) {
+      this.emit(text);
+      return;
+    }
+    // Multi-line block comment: emit the first line onto currentLine, then
+    // push each subsequent line as a standalone line preserving the comment's
+    // own internal whitespace (e.g. leading " * " prefixes).
+    const parts = text.split('\n');
+    this.emit(parts[0].trimEnd());
+    for (let i = 1; i < parts.length; i++) {
+      this.finishLine();
+      this.currentLine = parts[i].trimEnd();
+    }
+  }
+
   private emitToken(token: Token): void {
+    if (token.type === 'comment') {
+      this.emitCommentText(token.value);
+      return;
+    }
     if (token.type === 'word') {
       const upper = token.value.toUpperCase();
       // Track table case for matchTable mode
@@ -1137,6 +1161,19 @@ class SqlFormatter {
       }
       this.currentLine = ' '.repeat(this.indent);
 
+      // Emit any comment lines that immediately precede the next statement.
+      // They are associated with the statement, so no blank line is inserted
+      // between the comment block and the code that follows it.
+      while (!this.atEnd() && this.peek()?.type === 'comment') {
+        this.emitCommentText(this.advance().value);
+        this.newLine(this.indent);
+        // Re-check block exit conditions in case the comment was the last
+        // token before END / ELSE inside a BEGIN...END block.
+        if (insideBlock && (this.isEndKeyword() || this.upper() === 'ELSE')) break;
+      }
+      if (this.atEnd()) break;
+      if (insideBlock && (this.isEndKeyword() || this.upper() === 'ELSE')) break;
+
       this.formatStatement();
       first = false;
     }
@@ -1349,6 +1386,18 @@ class SqlFormatter {
         continue;
       }
 
+      // Handle inline comments (same rules as writeInlineUntil)
+      if (token.type === 'comment') {
+        if (this.needsSpaceBefore(token, prevToken)) this.emit(' ');
+        this.advance();
+        this.emitCommentText(token.value);
+        if (token.value.startsWith('--') || token.value.includes('\n')) {
+          break;
+        }
+        prevToken = token;
+        continue;
+      }
+
       this.advance();
       if (this.needsSpaceBefore(token, prevToken)) this.emit(' ');
       this.emitToken(token);
@@ -1526,6 +1575,14 @@ class SqlFormatter {
       if (this.isStatementStart()) break;
       // Stop at close paren (e.g., end of CTE body)
       if (this.peek()?.type === 'cparen') break;
+
+      // Comments between clauses: emit on their own line at the clause indent
+      // level so they stay visually associated with the surrounding SQL.
+      if (this.peek()?.type === 'comment') {
+        this.newLine(stmtIndent);
+        this.emitCommentText(this.advance().value);
+        continue;
+      }
 
       if (u === 'FROM') {
         this.newLine(stmtIndent);
@@ -1974,6 +2031,25 @@ class SqlFormatter {
     while (!this.atEnd() && !stop()) {
       const token = this.peek()!;
 
+      // Handle comment tokens inline.
+      // • Single-line (--) comments terminate the current logical line; break out
+      //   so the caller's next newLine() call correctly flushes the comment line
+      //   and subsequent tokens get their own properly-indented output line.
+      // • Block comments (/* */) without newlines are emitted in-place.
+      // • Multi-line block comments are split across output lines by emitCommentText;
+      //   we then break so the caller can re-establish indentation.
+      if (token.type === 'comment') {
+        if (this.needsSpaceBefore(token, prevToken)) this.emit(' ');
+        this.advance();
+        this.emitCommentText(token.value);
+        if (token.value.startsWith('--') || token.value.includes('\n')) {
+          // Comment terminated the logical line; let the caller start a fresh one.
+          break;
+        }
+        prevToken = token;
+        continue;
+      }
+
       // Handle parenthesized expressions inline
       if (token.type === 'oparen') {
         if (this.needsSpaceBefore(token, prevToken)) this.emit(' ');
@@ -2006,7 +2082,7 @@ class SqlFormatter {
   private writeInlineCase(): void {
     this.emitToken(this.advance()); // CASE
     let depth = 1;
-    let prevToken: Token = { type: 'word', value: 'CASE' };
+    let prevToken: Token | null = { type: 'word', value: 'CASE' };
 
     while (!this.atEnd() && depth > 0) {
       const token = this.peek()!;
@@ -2031,6 +2107,18 @@ class SqlFormatter {
           this.writeInlineParens();
         }
         prevToken = { type: 'cparen', value: ')' };
+        continue;
+      }
+
+      // Handle comment tokens (same rules as writeInlineUntil)
+      if (token.type === 'comment') {
+        if (this.needsSpaceBefore(token, prevToken)) this.emit(' ');
+        this.advance();
+        this.emitCommentText(token.value);
+        if (token.value.startsWith('--') || token.value.includes('\n')) {
+          break;
+        }
+        prevToken = token;
         continue;
       }
 
