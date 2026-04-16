@@ -9,6 +9,17 @@
     "type": "git",
     "url": "https://github.com/JMatos1221/tsql-formatter.git"
   },
+  "homepage": "https://github.com/JMatos1221/tsql-formatter#readme",
+  "bugs": {
+    "url": "https://github.com/JMatos1221/tsql-formatter/issues"
+  },
+  "keywords": [
+    "sql",
+    "tsql",
+    "formatter",
+    "vscode",
+    "extension"
+  ],
   "engines": {
     "vscode": "^1.80.0"
   },
@@ -54,14 +65,25 @@
           ],
           "default": "preserve",
           "description": "Element casing mode for database/table/column names."
+        },
+        "tsqlFormatter.useBrackets": {
+          "type": "boolean",
+          "default": false,
+          "description": "Wrap identifiers in square brackets when formatting (e.g., [TableName])."
         }
       }
     }
   },
   "scripts": {
     "compile": "tsc -p ./",
-    "watch": "tsc -watch -p ./"
+    "watch": "tsc -watch -p ./",
+    "prepare": "npm run compile"
   },
+  "files": [
+    "out",
+    "README.md",
+    "LICENSE"
+  ],
   "devDependencies": {
     "@types/node": "22.17.0",
     "@types/vscode": "1.80.0",
