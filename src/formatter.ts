@@ -1105,7 +1105,10 @@ class SqlFormatter {
   // Returns true when the current position is an opening paren that contains a subquery
   private isSubqueryStart(): boolean {
     if (this.peek()?.type !== 'oparen') return false;
-    const inner = this.peek(1);
+    // Skip any comment tokens immediately after ( to find the first meaningful token
+    let offset = 1;
+    while (this.peek(offset)?.type === 'comment') offset++;
+    const inner = this.peek(offset);
     if (!inner || inner.type !== 'word') return false;
     return inner.value.toUpperCase() === 'SELECT';
   }
@@ -2041,8 +2044,8 @@ class SqlFormatter {
   // Format a subquery (SELECT inside parens) with proper indentation.
   // The opening ( is on the current line; content is indented; ) is on its own line.
   private writeSubquery(): void {
-    // Use the current line's indentation as the base so that ) aligns with the
-    // line that contains (, regardless of this.indent (which tracks newLine() default).
+    // baseIndent = number of leading spaces on the current line, so ) aligns with
+    // the line that contains (, regardless of this.indent (which tracks newLine() default).
     const baseIndent = this.currentLine.length - this.currentLine.trimStart().length;
     this.emit('(');
     this.advance(); // consume (
@@ -2050,6 +2053,11 @@ class SqlFormatter {
     this.newLine(subIndent);
     const savedIndent = this.indent;
     this.indent = subIndent;
+    // Emit any comment tokens that appear before SELECT
+    while (this.peek()?.type === 'comment') {
+      this.emit(this.advance().value);
+      this.newLine(subIndent);
+    }
     if (this.upper() === 'SELECT') {
       this.formatSelectQuery(subIndent);
     }
