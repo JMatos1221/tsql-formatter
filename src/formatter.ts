@@ -1102,6 +1102,14 @@ class SqlFormatter {
     return u === 'AND' || u === 'OR';
   }
 
+  // Returns true when the current position is an opening paren that contains a subquery
+  private isSubqueryStart(): boolean {
+    if (this.peek()?.type !== 'oparen') return false;
+    const inner = this.peek(1);
+    if (!inner || inner.type !== 'word') return false;
+    return inner.value.toUpperCase() === 'SELECT';
+  }
+
   // --- Statement list formatter ---
   private formatStatementList(insideBlock: boolean): void {
     let first = true;
@@ -1329,7 +1337,11 @@ class SqlFormatter {
 
       if (token.type === 'oparen') {
         if (this.needsSpaceBefore(token, prevToken)) this.emit(' ');
-        this.writeInlineParens();
+        if (this.isSubqueryStart()) {
+          this.writeSubquery();
+        } else {
+          this.writeInlineParens();
+        }
         prevToken = { type: 'cparen', value: ')' };
         continue;
       }
@@ -1892,6 +1904,27 @@ class SqlFormatter {
 
   // --- Table reference (name, possibly schema.name or db.schema.name, or table-valued function) ---
   private writeTableRef(consumeParens: boolean = false): void {
+    // Handle derived table (subquery) as table source: (SELECT ...) [AS] alias
+    if (this.isSubqueryStart()) {
+      this.writeSubquery();
+      // Optional alias after closing )
+      if (this.peek()?.type === 'word' && !this.isClauseKeyword() && !this.isStatementStart()) {
+        const u = this.upper();
+        if (u === 'AS') {
+          this.emit(' ');
+          this.emitToken(this.advance()); // AS
+          this.emit(' ');
+          if (this.peek()?.type === 'word') {
+            this.emitToken(this.advance()); // alias
+          }
+        } else if (!isKeywordLike(this.peek()!.value)) {
+          this.emit(' ');
+          this.emitToken(this.advance()); // alias
+        }
+      }
+      return;
+    }
+
     if (this.atEnd() || this.peek()?.type !== 'word') return;
     this.emitToken(this.advance()); // table name or first part
 
@@ -1941,7 +1974,11 @@ class SqlFormatter {
       // Handle parenthesized expressions inline
       if (token.type === 'oparen') {
         if (this.needsSpaceBefore(token, prevToken)) this.emit(' ');
-        this.writeInlineParens();
+        if (this.isSubqueryStart()) {
+          this.writeSubquery();
+        } else {
+          this.writeInlineParens();
+        }
         prevToken = { type: 'cparen', value: ')' };
         continue;
       }
@@ -1985,7 +2022,11 @@ class SqlFormatter {
       // Handle parenthesized sub-expressions
       if (token.type === 'oparen') {
         if (this.needsSpaceBefore(token, prevToken)) this.emit(' ');
-        this.writeInlineParens();
+        if (this.isSubqueryStart()) {
+          this.writeSubquery();
+        } else {
+          this.writeInlineParens();
+        }
         prevToken = { type: 'cparen', value: ')' };
         continue;
       }
@@ -1995,6 +2036,29 @@ class SqlFormatter {
       this.emitToken(token);
       prevToken = token;
     }
+  }
+
+  // Format a subquery (SELECT inside parens) with proper indentation.
+  // The opening ( is on the current line; content is indented; ) is on its own line.
+  private writeSubquery(): void {
+    // Use the current line's indentation as the base so that ) aligns with the
+    // line that contains (, regardless of this.indent (which tracks newLine() default).
+    const baseIndent = this.currentLine.length - this.currentLine.trimStart().length;
+    this.emit('(');
+    this.advance(); // consume (
+    const subIndent = baseIndent + INDENT_SIZE;
+    this.newLine(subIndent);
+    const savedIndent = this.indent;
+    this.indent = subIndent;
+    if (this.upper() === 'SELECT') {
+      this.formatSelectQuery(subIndent);
+    }
+    this.indent = savedIndent;
+    this.newLine(baseIndent);
+    if (this.peek()?.type === 'cparen') {
+      this.advance(); // consume )
+    }
+    this.emit(')');
   }
 
   private writeInlineParens(): void {
