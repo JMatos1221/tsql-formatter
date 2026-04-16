@@ -1,5 +1,5 @@
-import * as vscode from "vscode";
-import { TsqlFormattingProvider } from "./formatter";
+import * as vscode from 'vscode';
+import { TsqlFormattingProvider } from './formatter';
 
 export function activate(context: vscode.ExtensionContext): void {
   const selector: vscode.DocumentSelector = [
