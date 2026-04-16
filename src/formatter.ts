@@ -621,7 +621,7 @@ function tokenize(input: string): Token[] {
         !(input[end] === "*" && input[end + 1] === "/")
       )
         end++;
-      if (end < input.length) end += 2;
+      if (end < input.length) end += 2; // skip past closing */; if unclosed, end stays at input.length
       tokens.push({ type: "comment", value: input.slice(i, end) });
       i = end;
       continue;
@@ -1496,7 +1496,9 @@ class SqlFormatter {
 
       firstCte = false;
 
-      // Check for another CTE (comma separator)
+      // Check for another CTE (comma separator).
+      // The comma is consumed here; it is re-emitted via this.emit(",") at the
+      // top of the next iteration so it appears before the next CTE name.
       if (this.peek()?.type !== "comma") break;
       this.advance(); // consume comma
     }
