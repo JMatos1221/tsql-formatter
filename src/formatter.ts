@@ -891,7 +891,31 @@ class SqlFormatter {
     return token.value;
   }
 
+  // --- Comment emission ---
+
+  // Safely emit comment text, handling multi-line block comments by splitting
+  // on embedded newlines so that currentLine tracking stays correct.
+  private emitCommentText(text: string): void {
+    if (!text.includes('\n')) {
+      this.emit(text);
+      return;
+    }
+    // Multi-line block comment: emit the first line onto currentLine, then
+    // push each subsequent line as a standalone line preserving the comment's
+    // own internal whitespace (e.g. leading " * " prefixes).
+    const parts = text.split('\n');
+    this.emit(parts[0].trimEnd());
+    for (let i = 1; i < parts.length; i++) {
+      this.finishLine();
+      this.currentLine = parts[i].trimEnd();
+    }
+  }
+
   private emitToken(token: Token): void {
+    if (token.type === 'comment') {
+      this.emitCommentText(token.value);
+      return;
+    }
     if (token.type === 'word') {
       const upper = token.value.toUpperCase();
       // Track table case for matchTable mode
@@ -1102,6 +1126,17 @@ class SqlFormatter {
     return u === 'AND' || u === 'OR';
   }
 
+  // Returns true when the current position is an opening paren that contains a subquery
+  private isSubqueryStart(): boolean {
+    if (this.peek()?.type !== 'oparen') return false;
+    // Skip any comment tokens immediately after ( to find the first meaningful token
+    let offset = 1;
+    while (this.peek(offset)?.type === 'comment') offset++;
+    const inner = this.peek(offset);
+    if (!inner || inner.type !== 'word') return false;
+    return inner.value.toUpperCase() === 'SELECT';
+  }
+
   // --- Statement list formatter ---
   private formatStatementList(insideBlock: boolean): void {
     let first = true;
@@ -1125,6 +1160,19 @@ class SqlFormatter {
         this.blankLines(this.options.linesBetweenQueries);
       }
       this.currentLine = ' '.repeat(this.indent);
+
+      // Emit any comment lines that immediately precede the next statement.
+      // They are associated with the statement, so no blank line is inserted
+      // between the comment block and the code that follows it.
+      while (!this.atEnd() && this.peek()?.type === 'comment') {
+        this.emitCommentText(this.advance().value);
+        this.newLine(this.indent);
+        // Re-check block exit conditions in case the comment was the last
+        // token before END / ELSE inside a BEGIN...END block.
+        if (insideBlock && (this.isEndKeyword() || this.upper() === 'ELSE')) break;
+      }
+      if (this.atEnd()) break;
+      if (insideBlock && (this.isEndKeyword() || this.upper() === 'ELSE')) break;
 
       this.formatStatement();
       first = false;
@@ -1329,8 +1377,24 @@ class SqlFormatter {
 
       if (token.type === 'oparen') {
         if (this.needsSpaceBefore(token, prevToken)) this.emit(' ');
-        this.writeInlineParens();
+        if (this.isSubqueryStart()) {
+          this.writeSubquery();
+        } else {
+          this.writeInlineParens();
+        }
         prevToken = { type: 'cparen', value: ')' };
+        continue;
+      }
+
+      // Handle inline comments (same rules as writeInlineUntil)
+      if (token.type === 'comment') {
+        if (this.needsSpaceBefore(token, prevToken)) this.emit(' ');
+        this.advance();
+        this.emitCommentText(token.value);
+        if (token.value.startsWith('--') || token.value.includes('\n')) {
+          break;
+        }
+        prevToken = token;
         continue;
       }
 
@@ -1511,6 +1575,14 @@ class SqlFormatter {
       if (this.isStatementStart()) break;
       // Stop at close paren (e.g., end of CTE body)
       if (this.peek()?.type === 'cparen') break;
+
+      // Comments between clauses: emit on their own line at the clause indent
+      // level so they stay visually associated with the surrounding SQL.
+      if (this.peek()?.type === 'comment') {
+        this.newLine(stmtIndent);
+        this.emitCommentText(this.advance().value);
+        continue;
+      }
 
       if (u === 'FROM') {
         this.newLine(stmtIndent);
@@ -1892,6 +1964,27 @@ class SqlFormatter {
 
   // --- Table reference (name, possibly schema.name or db.schema.name, or table-valued function) ---
   private writeTableRef(consumeParens: boolean = false): void {
+    // Handle derived table (subquery) as table source: (SELECT ...) [AS] alias
+    if (this.isSubqueryStart()) {
+      this.writeSubquery();
+      // Optional alias after closing )
+      if (this.peek()?.type === 'word' && !this.isClauseKeyword() && !this.isStatementStart()) {
+        const u = this.upper();
+        if (u === 'AS') {
+          this.emit(' ');
+          this.emitToken(this.advance()); // AS
+          this.emit(' ');
+          if (this.peek()?.type === 'word') {
+            this.emitToken(this.advance()); // alias
+          }
+        } else if (!isKeywordLike(this.peek()!.value)) {
+          this.emit(' ');
+          this.emitToken(this.advance()); // alias
+        }
+      }
+      return;
+    }
+
     if (this.atEnd() || this.peek()?.type !== 'word') return;
     this.emitToken(this.advance()); // table name or first part
 
@@ -1938,10 +2031,33 @@ class SqlFormatter {
     while (!this.atEnd() && !stop()) {
       const token = this.peek()!;
 
+      // Handle comment tokens inline.
+      // • Single-line (--) comments terminate the current logical line; break out
+      //   so the caller's next newLine() call correctly flushes the comment line
+      //   and subsequent tokens get their own properly-indented output line.
+      // • Block comments (/* */) without newlines are emitted in-place.
+      // • Multi-line block comments are split across output lines by emitCommentText;
+      //   we then break so the caller can re-establish indentation.
+      if (token.type === 'comment') {
+        if (this.needsSpaceBefore(token, prevToken)) this.emit(' ');
+        this.advance();
+        this.emitCommentText(token.value);
+        if (token.value.startsWith('--') || token.value.includes('\n')) {
+          // Comment terminated the logical line; let the caller start a fresh one.
+          break;
+        }
+        prevToken = token;
+        continue;
+      }
+
       // Handle parenthesized expressions inline
       if (token.type === 'oparen') {
         if (this.needsSpaceBefore(token, prevToken)) this.emit(' ');
-        this.writeInlineParens();
+        if (this.isSubqueryStart()) {
+          this.writeSubquery();
+        } else {
+          this.writeInlineParens();
+        }
         prevToken = { type: 'cparen', value: ')' };
         continue;
       }
@@ -1985,8 +2101,24 @@ class SqlFormatter {
       // Handle parenthesized sub-expressions
       if (token.type === 'oparen') {
         if (this.needsSpaceBefore(token, prevToken)) this.emit(' ');
-        this.writeInlineParens();
+        if (this.isSubqueryStart()) {
+          this.writeSubquery();
+        } else {
+          this.writeInlineParens();
+        }
         prevToken = { type: 'cparen', value: ')' };
+        continue;
+      }
+
+      // Handle comment tokens (same rules as writeInlineUntil)
+      if (token.type === 'comment') {
+        if (this.needsSpaceBefore(token, prevToken)) this.emit(' ');
+        this.advance();
+        this.emitCommentText(token.value);
+        if (token.value.startsWith('--') || token.value.includes('\n')) {
+          break;
+        }
+        prevToken = token;
         continue;
       }
 
@@ -1995,6 +2127,35 @@ class SqlFormatter {
       this.emitToken(token);
       prevToken = token;
     }
+  }
+
+  // Format a subquery (SELECT inside parens) with proper indentation.
+  // The opening ( is on the current line; content is indented; ) is on its own line.
+  private writeSubquery(): void {
+    // baseIndent = number of leading spaces on the current line, so ) aligns with
+    // the line that contains (, regardless of this.indent (which tracks newLine() default).
+    const baseIndent = this.currentLine.length - this.currentLine.trimStart().length;
+    this.emit('(');
+    this.advance(); // consume (
+    const subIndent = baseIndent + INDENT_SIZE;
+    this.newLine(subIndent);
+    const savedIndent = this.indent;
+    this.indent = subIndent;
+    // Emit any comment tokens that appear before SELECT
+    while (this.peek()?.type === 'comment') {
+      const cmt = this.advance();
+      this.emitCommentText(cmt.value);
+      this.newLine(subIndent);
+    }
+    if (this.upper() === 'SELECT') {
+      this.formatSelectQuery(subIndent);
+    }
+    this.indent = savedIndent;
+    this.newLine(baseIndent);
+    if (this.peek()?.type === 'cparen') {
+      this.advance(); // consume )
+    }
+    this.emit(')');
   }
 
   private writeInlineParens(): void {
