@@ -1,8 +1,8 @@
-# tsql-formatter
+# Clean T-SQL Formatter
 
 A VS Code extension that formats T-SQL statements.
 
-- [tsql-formatter](#tsql-formatter)
+- [Clean T-SQL Formatter](#clean-t-sql-formatter)
   - [Install](#install)
   - [Use](#use)
   - [Settings](#settings)
@@ -10,10 +10,10 @@ A VS Code extension that formats T-SQL statements.
 
 ## Install
 
-Install `tsql-formatter` from the Visual Studio Code Extensions view:
+Install `clean-tsql-formatter` from the Visual Studio Code Extensions view:
 
 1. Open Extensions in VS Code.
-2. Search for `tsql-formatter`.
+2. Search for `clean-tsql-formatter`.
 3. Select the extension and choose **Install**.
 
 ## Use

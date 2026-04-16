@@ -1,6 +1,6 @@
 {
-  "name": "tsql-formatter",
-  "displayName": "T-SQL Formatter",
+  "name": "clean-tsql-formatter",
+  "displayName": "Clean T-SQL Formatter",
   "description": "A VS Code formatter extension for T-SQL.",
   "version": "1.0.0",
   "license": "MIT",
@@ -21,7 +21,7 @@
   "main": "./out/extension.js",
   "contributes": {
     "configuration": {
-      "title": "T-SQL Formatter",
+      "title": "Clean T-SQL Formatter",
       "properties": {
         "tsqlFormatter.linesBetweenQueries": {
           "type": "number",
