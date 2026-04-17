@@ -2198,16 +2198,38 @@ export class TsqlFormattingProvider implements vscode.DocumentFormattingEditProv
     };
 
     const source = document.getText();
-    const formatted = formatTsql(source, options);
 
-    if (formatted === source) {
+    try {
+      const formatted = formatTsql(source, options);
+
+      if (formatted === source) {
+        return [];
+      }
+
+      const fullRange = new vscode.Range(
+        document.positionAt(0),
+        document.positionAt(source.length),
+      );
+      return [vscode.TextEdit.replace(fullRange, formatted)];
+    } catch (err) {
+      // Ensure we have an Error-like object
+      const error = err instanceof Error ? err : new Error(String(err));
+      getOutputChannel().appendLine(`[tsql-formatter] Formatting failed: ${error.message}`);
+      getOutputChannel().appendLine(error.stack ?? 'no stack');
+      getOutputChannel().show(true);
+      void vscode.window.showErrorMessage(
+        'tsql-formatter: failed to format document. See "TSQL Formatter" output for details.',
+      );
+      // Fall back to no edits so VS Code leaves the document unchanged
       return [];
     }
-
-    const fullRange = new vscode.Range(document.positionAt(0), document.positionAt(source.length));
-
-    return [vscode.TextEdit.replace(fullRange, formatted)];
   }
+}
+
+let _outputChannel: vscode.OutputChannel | null = null;
+function getOutputChannel(): vscode.OutputChannel {
+  if (!_outputChannel) _outputChannel = vscode.window.createOutputChannel('TSQL Formatter');
+  return _outputChannel;
 }
 
 function formatTsql(input: string, options: FormatterOptions): string {
