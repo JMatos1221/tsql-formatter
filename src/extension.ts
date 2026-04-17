@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { TsqlFormattingProvider } from './formatter';
+import { TsqlFormattingProvider, getOutputChannel } from './formatter';
 
 export function activate(context: vscode.ExtensionContext): void {
   const selector: vscode.DocumentSelector = [
@@ -10,6 +10,11 @@ export function activate(context: vscode.ExtensionContext): void {
   context.subscriptions.push(
     vscode.languages.registerDocumentFormattingEditProvider(selector, new TsqlFormattingProvider()),
   );
+
+  // Ensure the extension has an Output channel tab visible in the Output panel.
+  const out = getOutputChannel();
+  context.subscriptions.push(out);
+  out.appendLine('TSQL Formatter activated');
 }
 
 export function deactivate(): void {

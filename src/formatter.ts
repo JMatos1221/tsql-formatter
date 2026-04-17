@@ -1157,7 +1157,16 @@ class SqlFormatter {
         // (e.g., "BEGIN TRY" from formatBeginTryCatch)
         this.finishLine();
       } else {
-        this.blankLines(this.options.linesBetweenQueries);
+        // If the next statement is a GO batch separator, only break to a
+        // new line (no extra blank lines), since GO conceptually belongs
+        // directly after the previous batch as a confirmation token.
+        const nextToken = this.peek();
+        const nextWord = nextToken?.type === 'word' ? nextToken.value.toUpperCase() : '';
+        if (nextWord === 'GO') {
+          this.finishLine();
+        } else {
+          this.blankLines(this.options.linesBetweenQueries);
+        }
       }
       this.currentLine = ' '.repeat(this.indent);
 
@@ -1230,8 +1239,11 @@ class SqlFormatter {
       case 'SET':
         return this.formatSetStatement();
       case 'TRUNCATE':
+        return this.formatGenericLine();
       case 'USE':
+        return this.formatUse();
       case 'GO':
+        return this.formatGo();
       case 'GRANT':
       case 'REVOKE':
       case 'DENY':
@@ -1957,6 +1969,40 @@ class SqlFormatter {
     this.writeInlineUntil(() => this.isStatementStart());
   }
 
+  // --- USE statement ---
+  private formatUse(): void {
+    this.emitToken(this.advance()); // USE
+    // Write the database name / identifier following USE
+    if (!this.atEnd() && !this.isStatementStart()) {
+      this.emit(' ');
+      this.writeInlineUntil(() => this.isStatementStart());
+    }
+    // Optional trailing semicolon
+    if (this.peek()?.type === 'semicolon') {
+      this.emit(this.advance().value);
+    }
+  }
+
+  // --- GO batch separator ---
+  private formatGo(): void {
+    this.emitToken(this.advance()); // GO
+    // Optional repeat count (GO 2)
+    if (this.peek()?.type === 'number') {
+      this.emit(' ');
+      this.emitToken(this.advance());
+    }
+    // Optional semicolon after GO
+    if (this.peek()?.type === 'semicolon') {
+      this.emit(this.advance().value);
+    }
+    // Inline comment on the GO line
+    if (this.peek()?.type === 'comment') {
+      this.emit(' ');
+      const c = this.advance();
+      this.emitCommentText(c.value);
+    }
+  }
+
   // --- Generic line ---
   private formatGenericLine(): void {
     this.writeInlineUntil(() => this.isStatementStart());
@@ -2227,7 +2273,7 @@ export class TsqlFormattingProvider implements vscode.DocumentFormattingEditProv
 }
 
 let _outputChannel: vscode.OutputChannel | null = null;
-function getOutputChannel(): vscode.OutputChannel {
+export function getOutputChannel(): vscode.OutputChannel {
   if (!_outputChannel) _outputChannel = vscode.window.createOutputChannel('TSQL Formatter');
   return _outputChannel;
 }
