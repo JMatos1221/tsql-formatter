@@ -2,7 +2,7 @@
   "name": "clean-tsql-formatter",
   "displayName": "Clean T-SQL Formatter",
   "description": "A VS Code formatter extension for T-SQL.",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "license": "MIT",
   "publisher": "JMatos1221",
   "repository": {
