@@ -2200,7 +2200,7 @@ export class TsqlFormattingProvider implements vscode.DocumentFormattingEditProv
       identifierCase: config.get<CaseOption>('identifierCase', 'preserve'),
       keywordCase: config.get<KeywordCaseOption>('keywordCase', 'preserve'),
       linesBetweenQueries: Math.max(0, config.get<number>('linesBetweenQueries', 2)),
-      maxLineLength: Math.max(1, config.get<number>('maxLineLength', 100)),
+      maxLineLength: Math.max(20, config.get<number>('maxLineLength', 100)),
     };
 
     const source = document.getText();

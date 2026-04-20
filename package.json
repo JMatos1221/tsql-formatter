@@ -68,7 +68,7 @@
           "tsqlFormatter.maxLineLength": {
             "type": "number",
             "default": 100,
-            "minimum": 1,
+            "minimum": 20,
             "description": "Maximum line length before formatter wraps onto a new continuation line."
           },
           "tsqlFormatter.useBrackets": {
