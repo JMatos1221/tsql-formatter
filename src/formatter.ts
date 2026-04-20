@@ -1,13 +1,14 @@
 import * as vscode from 'vscode';
 
-type CaseOption = 'upper' | 'lower' | 'preserve' | 'matchTable';
+type CaseOption = 'upper' | 'lower' | 'preserve';
 type KeywordCaseOption = 'upper' | 'lower' | 'preserve';
 
 interface FormatterOptions {
-  linesBetweenQueries: number;
   breakOnKeywords: boolean;
+  identifierCase: CaseOption;
   keywordCase: KeywordCaseOption;
-  elementCase: CaseOption;
+  linesBetweenQueries: number;
+  maxLineLength: number;
 }
 
 // --- Token definition ---
@@ -780,12 +781,6 @@ function applyCase(value: string, option: string): string {
   return value;
 }
 
-function detectCase(value: string): 'upper' | 'lower' | 'preserve' {
-  if (value === value.toUpperCase() && value !== value.toLowerCase()) return 'upper';
-  if (value === value.toLowerCase() && value !== value.toUpperCase()) return 'lower';
-  return 'preserve';
-}
-
 function isKeywordLike(word: string): boolean {
   if (word.startsWith('[') || word.startsWith('"')) return false;
   const upper = word.toUpperCase();
@@ -802,8 +797,6 @@ class SqlFormatter {
   private currentLine: string = '';
   private indent: number = 0;
   private options: FormatterOptions;
-  private lastTableCase: 'upper' | 'lower' | 'preserve' = 'preserve';
-  private prevTableKeyword: string | null = null;
 
   constructor(tokens: Token[], options: FormatterOptions) {
     this.tokens = tokens;
@@ -871,6 +864,19 @@ class SqlFormatter {
     this.currentLine = ' '.repeat(col);
   }
 
+  private wrapBeforeTokenIfNeeded(token: Token, tokenText: string): void {
+    if (this.options.maxLineLength <= 0) return;
+    if (this.currentLine.trim().length === 0) return;
+    if (['comma', 'cparen', 'semicolon', 'dot'].includes(token.type)) return;
+    if (this.currentLine.length + tokenText.length <= this.options.maxLineLength) return;
+
+    if (this.currentLine.endsWith(' ')) {
+      this.currentLine = this.currentLine.slice(0, -1);
+    }
+    const lineIndent = this.currentLine.length - this.currentLine.trimStart().length;
+    this.newLine(lineIndent + INDENT_SIZE);
+  }
+
   // --- Casing ---
   private caseWord(token: Token): string {
     if (token.type !== 'word') return token.value;
@@ -879,13 +885,13 @@ class SqlFormatter {
     if (isKeywordLike(token.value)) {
       return applyCase(token.value, this.options.keywordCase);
     }
-    return this.applyElementCasing(token);
+    return this.applyIdentifierCasing(token);
   }
 
-  private applyElementCasing(token: Token): string {
+  private applyIdentifierCasing(token: Token): string {
     // Preserve bracketed and double-quoted identifiers
     if (token.value.startsWith('[') || token.value.startsWith('"')) return token.value;
-    const opt = this.options.elementCase;
+    const opt = this.options.identifierCase;
     if (opt === 'preserve') return token.value;
     if (opt === 'upper' || opt === 'lower') return applyCase(token.value, opt);
     return token.value;
@@ -916,56 +922,9 @@ class SqlFormatter {
       this.emitCommentText(token.value);
       return;
     }
-    if (token.type === 'word') {
-      const upper = token.value.toUpperCase();
-      // Track table case for matchTable mode
-      if (
-        this.prevTableKeyword &&
-        !isKeywordLike(token.value) &&
-        !token.value.startsWith('@') &&
-        !token.value.startsWith('[') &&
-        !token.value.startsWith('"')
-      ) {
-        this.lastTableCase = detectCase(token.value);
-        this.prevTableKeyword = null;
-      }
-      if (
-        [
-          'FROM',
-          'JOIN',
-          'UPDATE',
-          'INTO',
-          'INSERT INTO',
-          'DELETE FROM',
-          'INNER JOIN',
-          'LEFT JOIN',
-          'RIGHT JOIN',
-          'FULL JOIN',
-          'CROSS JOIN',
-          'LEFT OUTER JOIN',
-          'RIGHT OUTER JOIN',
-          'FULL OUTER JOIN',
-        ].includes(upper)
-      ) {
-        this.prevTableKeyword = upper;
-      }
-
-      // Apply matchTable casing for dotted references
-      if (this.options.elementCase === 'matchTable') {
-        const prevTok = this.tokens[this.pos - 2];
-        if (
-          prevTok?.type === 'dot' &&
-          !isKeywordLike(token.value) &&
-          !token.value.startsWith('@') &&
-          !token.value.startsWith('[') &&
-          !token.value.startsWith('"')
-        ) {
-          this.emit(applyCase(token.value, this.lastTableCase));
-          return;
-        }
-      }
-    }
-    this.emit(this.caseWord(token));
+    const tokenText = this.caseWord(token);
+    this.wrapBeforeTokenIfNeeded(token, tokenText);
+    this.emit(tokenText);
   }
 
   // --- Spacing logic ---
@@ -2237,10 +2196,11 @@ export class TsqlFormattingProvider implements vscode.DocumentFormattingEditProv
   provideDocumentFormattingEdits(document: vscode.TextDocument): vscode.TextEdit[] {
     const config = vscode.workspace.getConfiguration('tsqlFormatter');
     const options: FormatterOptions = {
-      linesBetweenQueries: Math.max(0, config.get<number>('linesBetweenQueries', 2)),
       breakOnKeywords: config.get<boolean>('breakOnKeywords', true),
+      identifierCase: config.get<CaseOption>('identifierCase', 'preserve'),
       keywordCase: config.get<KeywordCaseOption>('keywordCase', 'preserve'),
-      elementCase: config.get<CaseOption>('elementCase', 'preserve'),
+      linesBetweenQueries: Math.max(0, config.get<number>('linesBetweenQueries', 2)),
+      maxLineLength: Math.max(1, config.get<number>('maxLineLength', 100)),
     };
 
     const source = document.getText();
