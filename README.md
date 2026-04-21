@@ -44,10 +44,11 @@ Open a `.sql` file and run **Format Document** (right-click → Format Document,
 
 ## Settings
 
-- `tsqlFormatter.linesBetweenQueries` (number, default: `2`): Number of empty lines between top-level statements.
 - `tsqlFormatter.breakOnKeywords` (boolean, default: `true`): Place keywords like `WHERE`, `JOIN`, `AND`, `OR` on their own lines.
+- `tsqlFormatter.identifierCase` (`upper` | `lower` | `preserve`, default: `preserve`): Identifier casing for database/schema/table/column names.
 - `tsqlFormatter.keywordCase` (`upper` | `lower` | `preserve`, default: `preserve`): Keyword casing mode.
-- `tsqlFormatter.elementCase` (`upper` | `lower` | `preserve` | `matchTable`, default: `preserve`): Identifier casing for tables/columns.
+- `tsqlFormatter.linesBetweenQueries` (number, default: `2`): Number of empty lines between top-level statements.
+- `tsqlFormatter.maxLineLength` (number, default: `100`): Maximum output line length before wrapping to a continuation line.
 - `tsqlFormatter.useBrackets` (boolean, default: `false`): Wrap identifiers in square brackets (e.g., `[TableName]`).
 
 Change these in VS Code Settings by searching for `tsqlFormatter`.

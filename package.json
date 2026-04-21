@@ -31,44 +31,49 @@
   ],
   "main": "./out/extension.js",
   "contributes": {
-    "configuration": {
-      "title": "Clean T-SQL Formatter",
-      "properties": {
-        "tsqlFormatter.linesBetweenQueries": {
-          "type": "number",
-          "default": 2,
-          "minimum": 0,
-          "description": "Number of empty lines between instructions (SELECT, DELETE, UPDATE, INSERT, etc.)."
-        },
-        "tsqlFormatter.breakOnKeywords": {
-          "type": "boolean",
-          "default": true,
-          "description": "Break into a new line for keywords like WHERE, AND, OR, JOIN."
-        },
-        "tsqlFormatter.keywordCase": {
-          "type": "string",
-          "enum": [
-            "upper",
-            "lower",
+      "configuration": {
+        "title": "Clean T-SQL Formatter",
+        "properties": {
+          "tsqlFormatter.breakOnKeywords": {
+            "type": "boolean",
+            "default": true,
+            "description": "Break into a new line for keywords like WHERE, AND, OR, JOIN."
+          },
+          "tsqlFormatter.identifierCase": {
+            "type": "string",
+            "enum": [
+              "upper",
+              "lower",
+              "preserve"
+            ],
+            "default": "preserve",
+            "description": "Identifier casing mode for database/schema/table/column names."
+          },
+          "tsqlFormatter.keywordCase": {
+            "type": "string",
+            "enum": [
+              "upper",
+              "lower",
             "preserve"
           ],
-          "default": "preserve",
-          "description": "Keyword casing mode."
-        },
-        "tsqlFormatter.elementCase": {
-          "type": "string",
-          "enum": [
-            "upper",
-            "lower",
-            "preserve",
-            "matchTable"
-          ],
-          "default": "preserve",
-          "description": "Element casing mode for database/table/column names."
-        },
-        "tsqlFormatter.useBrackets": {
-          "type": "boolean",
-          "default": false,
+            "default": "preserve",
+            "description": "Keyword casing mode."
+          },
+          "tsqlFormatter.linesBetweenQueries": {
+            "type": "number",
+            "default": 2,
+            "minimum": 0,
+            "description": "Number of empty lines between instructions (SELECT, DELETE, UPDATE, INSERT, etc.)."
+          },
+          "tsqlFormatter.maxLineLength": {
+            "type": "number",
+            "default": 100,
+            "minimum": 20,
+            "description": "Maximum line length before formatter wraps onto a new continuation line."
+          },
+          "tsqlFormatter.useBrackets": {
+            "type": "boolean",
+            "default": false,
           "description": "Wrap identifiers in square brackets when formatting (e.g., [TableName])."
         }
       }
