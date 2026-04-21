@@ -9,6 +9,7 @@ interface FormatterOptions {
   keywordCase: KeywordCaseOption;
   linesBetweenQueries: number;
   maxLineLength: number;
+  useBrackets: boolean;
 }
 
 // --- Token definition ---
@@ -892,9 +893,10 @@ class SqlFormatter {
     // Preserve bracketed and double-quoted identifiers
     if (token.value.startsWith('[') || token.value.startsWith('"')) return token.value;
     const opt = this.options.identifierCase;
-    if (opt === 'preserve') return token.value;
-    if (opt === 'upper' || opt === 'lower') return applyCase(token.value, opt);
-    return token.value;
+    let value = token.value;
+    if (opt === 'upper' || opt === 'lower') value = applyCase(value, opt);
+    if (this.options.useBrackets) value = `[${value}]`;
+    return value;
   }
 
   // --- Comment emission ---
@@ -2201,6 +2203,7 @@ export class TsqlFormattingProvider implements vscode.DocumentFormattingEditProv
       keywordCase: config.get<KeywordCaseOption>('keywordCase', 'preserve'),
       linesBetweenQueries: Math.max(0, config.get<number>('linesBetweenQueries', 2)),
       maxLineLength: Math.max(20, config.get<number>('maxLineLength', 100)),
+      useBrackets: config.get<boolean>('useBrackets', false),
     };
 
     const source = document.getText();
