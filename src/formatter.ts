@@ -10,6 +10,7 @@ interface FormatterOptions {
   linesBetweenQueries: number;
   maxLineLength: number;
   useBrackets: boolean;
+  useMaxLineLength: boolean;
 }
 
 // --- Token definition ---
@@ -646,6 +647,7 @@ function tokenize(input: string): Token[] {
     if (/[A-Za-z_@#]/.test(input[i])) {
       let end = i;
       if (input[i] === '@' && input[i + 1] === '@') end = i + 2;
+      else if (input[i] === '#' && input[i + 1] === '#') end = i + 2;
       else if (input[i] === '@' || input[i] === '#') end = i + 1;
 
       while (end < input.length && /[A-Za-z0-9_]/.test(input[end])) end++;
@@ -866,6 +868,7 @@ class SqlFormatter {
   }
 
   private wrapBeforeTokenIfNeeded(token: Token, tokenText: string): void {
+    if (!this.options.useMaxLineLength) return;
     if (this.options.maxLineLength <= 0) return;
     if (this.currentLine.trim().length === 0) return;
     if (['comma', 'cparen', 'semicolon', 'dot'].includes(token.type)) return;
@@ -895,7 +898,10 @@ class SqlFormatter {
     const opt = this.options.identifierCase;
     let value = token.value;
     if (opt === 'upper' || opt === 'lower') value = applyCase(value, opt);
-    if (this.options.useBrackets) value = `[${value}]`;
+    // Variables (@var, @@sysvar) and temp tables (#temp, ##global) must never be bracketed
+    if (this.options.useBrackets && !token.value.startsWith('@') && !token.value.startsWith('#')) {
+      value = `[${value}]`;
+    }
     return value;
   }
 
@@ -2175,6 +2181,14 @@ class SqlFormatter {
     while (!this.atEnd() && depth > 0) {
       const token = this.peek()!;
 
+      // Detect a SELECT-subquery nested inside parens and format it with proper indentation
+      if (token.type === 'oparen' && this.isSubqueryStart()) {
+        if (this.needsSpaceBefore(token, prevToken)) this.emit(' ');
+        this.writeSubquery(); // writeSubquery emits its own ( and )
+        prevToken = { type: 'cparen', value: ')' };
+        continue;
+      }
+
       if (token.type === 'oparen') depth++;
       if (token.type === 'cparen') {
         depth--;
@@ -2204,6 +2218,7 @@ export class TsqlFormattingProvider implements vscode.DocumentFormattingEditProv
       linesBetweenQueries: Math.max(0, config.get<number>('linesBetweenQueries', 2)),
       maxLineLength: Math.max(20, config.get<number>('maxLineLength', 100)),
       useBrackets: config.get<boolean>('useBrackets', false),
+      useMaxLineLength: config.get<boolean>('useMaxLineLength', true),
     };
 
     const source = document.getText();

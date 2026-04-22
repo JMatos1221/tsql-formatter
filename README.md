@@ -48,8 +48,9 @@ Open a `.sql` file and run **Format Document** (right-click → Format Document,
 - `tsqlFormatter.identifierCase` (`upper` | `lower` | `preserve`, default: `preserve`): Identifier casing for database/schema/table/column names.
 - `tsqlFormatter.keywordCase` (`upper` | `lower` | `preserve`, default: `preserve`): Keyword casing mode.
 - `tsqlFormatter.linesBetweenQueries` (number, default: `2`): Number of empty lines between top-level statements.
-- `tsqlFormatter.maxLineLength` (number, default: `100`): Maximum output line length before wrapping to a continuation line.
-- `tsqlFormatter.useBrackets` (boolean, default: `false`): Wrap identifiers in square brackets (e.g., `[TableName]`).
+- `tsqlFormatter.maxLineLength` (number, default: `100`): Maximum output line length before wrapping to a continuation line. Only active when `useMaxLineLength` is enabled.
+- `tsqlFormatter.useBrackets` (boolean, default: `false`): Wrap identifiers in square brackets (e.g., `[TableName]`). Variables (`@var`, `@@sysvar`) and temporary tables (`#temp`, `##global`) are **never** bracketed, even when this setting is enabled.
+- `tsqlFormatter.useMaxLineLength` (boolean, default: `true`): Enable line-length-based wrapping. When `true`, tokens that would push a line past `maxLineLength` are moved to a new indented continuation line. Set to `false` to disable all line-length wrapping.
 
 Change these in VS Code Settings by searching for `tsqlFormatter`.
 
@@ -70,10 +71,24 @@ WHERE active = 1
 ORDER BY name
 ```
 
+Subqueries are formatted with the same clause-breaking as top-level queries, indented relative to their parent:
+
+```sql
+SELECT id
+FROM users
+WHERE id IN (
+    SELECT user_id
+    FROM orders
+    WHERE total > 100
+)
+```
+
 ## Notes
 
 - This extension focuses on formatting; it does not validate SQL semantics.
 - Formatting results depend on your `tsqlFormatter.*` settings.
+- `useBrackets` never applies to T-SQL variables (`@var`, `@@sysvar`) or temporary tables (`#temp`, `##global`).
+- Subquery formatting applies to `(SELECT ...)` expressions anywhere they appear — in `FROM` clauses, `WHERE`/`IN`/`EXISTS`, `SELECT` column lists, and inside function arguments.
 - Report issues or feature requests at https://github.com/JMatos1221/tsql-formatter/issues
 
 License: MIT

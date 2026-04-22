@@ -2,7 +2,7 @@
   "name": "clean-tsql-formatter",
   "displayName": "Clean T-SQL Formatter",
   "description": "A VS Code formatter extension for T-SQL.",
-  "version": "1.0.4",
+  "version": "1.0.5",
   "license": "MIT",
   "publisher": "JMatos1221",
   "repository": {
@@ -34,10 +34,16 @@
     "configuration": {
       "title": "Clean T-SQL Formatter",
       "properties": {
-        "tsqlFormatter.breakOnKeywords": {
-          "type": "boolean",
-          "default": true,
-          "description": "Break into a new line for keywords like WHERE, AND, OR, JOIN."
+        "tsqlFormatter.keywordCase": {
+          "type": "string",
+          "enum": [
+            "upper",
+            "lower",
+            "preserve"
+          ],
+          "default": "preserve",
+          "order": 10,
+          "description": "Keyword casing mode."
         },
         "tsqlFormatter.identifierCase": {
           "type": "string",
@@ -47,34 +53,40 @@
             "preserve"
           ],
           "default": "preserve",
+          "order": 20,
           "description": "Identifier casing mode for database/schema/table/column names."
         },
-        "tsqlFormatter.keywordCase": {
-          "type": "string",
-          "enum": [
-            "upper",
-            "lower",
-            "preserve"
-          ],
-          "default": "preserve",
-          "description": "Keyword casing mode."
+        "tsqlFormatter.useBrackets": {
+          "type": "boolean",
+          "default": false,
+          "order": 30,
+          "description": "Wrap identifiers in square brackets when formatting (e.g., [TableName]). Variables (@var, @@sysvar) and temporary tables (#temp, ##global) are never bracketed."
         },
-        "tsqlFormatter.linesBetweenQueries": {
-          "type": "number",
-          "default": 2,
-          "minimum": 0,
-          "description": "Number of empty lines between instructions (SELECT, DELETE, UPDATE, INSERT, etc.)."
+        "tsqlFormatter.breakOnKeywords": {
+          "type": "boolean",
+          "default": true,
+          "order": 40,
+          "description": "Break into a new line for keywords like WHERE, AND, OR, JOIN."
+        },
+        "tsqlFormatter.useMaxLineLength": {
+          "type": "boolean",
+          "default": true,
+          "order": 50,
+          "description": "When enabled, lines longer than maxLineLength are wrapped to a continuation line."
         },
         "tsqlFormatter.maxLineLength": {
           "type": "number",
           "default": 100,
           "minimum": 20,
+          "order": 51,
           "description": "Maximum line length before formatter wraps onto a new continuation line."
         },
-        "tsqlFormatter.useBrackets": {
-          "type": "boolean",
-          "default": false,
-          "description": "Wrap identifiers in square brackets when formatting (e.g., [TableName])."
+        "tsqlFormatter.linesBetweenQueries": {
+          "type": "number",
+          "default": 2,
+          "minimum": 0,
+          "order": 60,
+          "description": "Number of empty lines between instructions (SELECT, DELETE, UPDATE, INSERT, etc.)."
         }
       }
     }
