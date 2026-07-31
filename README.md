@@ -4,11 +4,11 @@ A VS Code extension that formats T-SQL statements consistently.
 
 - [Clean T-SQL Formatter](#clean-t-sql-formatter)
   - [Install](#install)
-  - [Build \& Run Locally](#build--run-locally)
-  - [Use](#use)
+  - [Features](#features)
+  - [Format SQL](#format-sql)
   - [Settings](#settings)
   - [Example](#example)
-  - [Notes](#notes)
+  - [Troubleshooting](#troubleshooting)
 
 ## Install
 
@@ -18,29 +18,33 @@ Install Clean T-SQL Formatter from the Visual Studio Code Extensions view:
 2. Search for "Clean T-SQL Formatter" or `clean-tsql-formatter`.
 3. Select the extension and choose **Install**.
 
-Alternatively, build and install a VSIX locally or run the extension in the Extension Development Host (see Build & Run Locally).
+The extension activates automatically when you open a SQL file.
 
-## Build & Run Locally
+## Features
 
-1. Clone the repository:
+- Format an entire SQL document or only the selected SQL.
+- Format common T-SQL statements, including DML, DDL, CTEs, subqueries, joins, `CASE` expressions,
+  window functions, transactions, cursors, and batches.
+- Preserve comments and string literals while applying consistent whitespace and indentation.
+- Configure keyword and identifier casing, bracketed identifiers, clause line breaks, line wrapping, and
+  spacing between statements.
+- Use with VS Code's built-in **Format on Save** support.
 
-```bash
-git clone https://github.com/JMatos1221/tsql-formatter.git
-cd tsql-formatter
-```
+## Format SQL
 
-2. Install dependencies and compile:
+### Format a document
 
-```bash
-npm install
-npm run compile
-```
+Open a `.sql` file, then run **Format Document** from the editor context menu or Command Palette. You can
+also use your configured VS Code format-document keyboard shortcut.
 
-3. Open the project in VS Code and press F5 to launch the Extension Development Host.
+To format when saving, enable **Editor: Format On Save** in VS Code Settings. If multiple formatters are
+available, choose **Clean T-SQL Formatter** as the default formatter for SQL files.
 
-## Use
+### Format a selection
 
-Open a `.sql` file and run **Format Document** (right-click → Format Document, Command Palette → Format Document, or use your keybinding). To format automatically on save, enable **Editor: Format On Save**.
+Select one or more complete SQL statements, then run **Format Selection** from the editor context menu or
+Command Palette. Only the selected text is replaced; text outside the selection is unchanged. With no
+selection, use **Format Document** to format the entire file.
 
 ## Settings
 
@@ -53,6 +57,16 @@ Open a `.sql` file and run **Format Document** (right-click → Format Document,
 - `tsqlFormatter.useMaxLineLength` (boolean, default: `true`): Enable line-length-based wrapping. When `true`, tokens that would push a line past `maxLineLength` are moved to a new indented continuation line. Set to `false` to disable all line-length wrapping.
 
 Change these in VS Code Settings by searching for `tsqlFormatter`.
+
+For project-specific settings, add them to `.vscode/settings.json` in your workspace:
+
+```json
+{
+  "tsqlFormatter.keywordCase": "upper",
+  "tsqlFormatter.identifierCase": "preserve",
+  "tsqlFormatter.useBrackets": false
+}
+```
 
 ## Example
 
@@ -83,12 +97,16 @@ WHERE id IN (
 )
 ```
 
-## Notes
+## Troubleshooting
 
-- This extension focuses on formatting; it does not validate SQL semantics.
-- Formatting results depend on your `tsqlFormatter.*` settings.
-- `useBrackets` never applies to T-SQL variables (`@var`, `@@sysvar`) or temporary tables (`#temp`, `##global`).
-- Subquery formatting applies to `(SELECT ...)` expressions anywhere they appear — in `FROM` clauses, `WHERE`/`IN`/`EXISTS`, `SELECT` column lists, and inside function arguments.
+- The extension formats SQL but does not validate SQL semantics. Review formatting changes with VS Code's
+  **Undo** command if needed.
+- Select complete statements when using **Format Selection** for the most predictable result.
+- `useBrackets` never applies to T-SQL variables (`@var`, `@@sysvar`) or temporary tables (`#temp`,
+  `##global`).
+- Subquery formatting applies to `(SELECT ...)` expressions anywhere they appear — in `FROM` clauses,
+  `WHERE`/`IN`/`EXISTS`, `SELECT` column lists, and function arguments.
+- If formatting fails, open VS Code's **Output** panel and select **TSQL Formatter** for details.
 - Report issues or feature requests at https://github.com/JMatos1221/tsql-formatter/issues
 
 License: MIT

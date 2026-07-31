@@ -2444,8 +2444,26 @@ class SqlFormatter {
 }
 
 // --- VSCode provider ---
-export class TsqlFormattingProvider implements vscode.DocumentFormattingEditProvider {
+export class TsqlFormattingProvider
+  implements vscode.DocumentFormattingEditProvider, vscode.DocumentRangeFormattingEditProvider
+{
   provideDocumentFormattingEdits(document: vscode.TextDocument): vscode.TextEdit[] {
+    const fullRange = new vscode.Range(document.positionAt(0), document.positionAt(document.getText().length));
+    return this.provideFormattingEdits(document, fullRange);
+  }
+
+  provideDocumentRangeFormattingEdits(
+    document: vscode.TextDocument,
+    range: vscode.Range,
+  ): vscode.TextEdit[] {
+    if (range.isEmpty) {
+      return [];
+    }
+
+    return this.provideFormattingEdits(document, range);
+  }
+
+  private provideFormattingEdits(document: vscode.TextDocument, range: vscode.Range): vscode.TextEdit[] {
     const config = vscode.workspace.getConfiguration('tsqlFormatter');
     const options: FormatterOptions = {
       breakOnKeywords: config.get<boolean>('breakOnKeywords', true),
@@ -2457,7 +2475,7 @@ export class TsqlFormattingProvider implements vscode.DocumentFormattingEditProv
       useMaxLineLength: config.get<boolean>('useMaxLineLength', true),
     };
 
-    const source = document.getText();
+    const source = document.getText(range);
 
     try {
       const formatted = formatTsql(source, options);
@@ -2466,11 +2484,7 @@ export class TsqlFormattingProvider implements vscode.DocumentFormattingEditProv
         return [];
       }
 
-      const fullRange = new vscode.Range(
-        document.positionAt(0),
-        document.positionAt(source.length),
-      );
-      return [vscode.TextEdit.replace(fullRange, formatted)];
+      return [vscode.TextEdit.replace(range, formatted)];
     } catch (err) {
       // Ensure we have an Error-like object
       const error = err instanceof Error ? err : new Error(String(err));
