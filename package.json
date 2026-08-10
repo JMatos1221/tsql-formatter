@@ -102,7 +102,7 @@
     "LICENSE"
   ],
   "devDependencies": {
-    "@types/node": "26.1.1",
+    "@types/node": "26.2.0",
     "@types/vscode": "^1.125.0",
     "typescript": "7.0.2"
   }
