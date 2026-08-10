@@ -1,9 +1,11 @@
-import * as vscode from 'vscode';
+import type * as vscode from 'vscode';
+
+declare const require: any;
 
 type CaseOption = 'upper' | 'lower' | 'preserve';
 type KeywordCaseOption = 'upper' | 'lower' | 'preserve';
 
-interface FormatterOptions {
+export interface FormatterOptions {
   breakOnKeywords: boolean;
   identifierCase: CaseOption;
   keywordCase: KeywordCaseOption;
@@ -382,6 +384,42 @@ const KEYWORDS = new Set([
   'EXECUTE AS',
   'FOR XML',
   'FOR JSON',
+  // Modern / Additional Keywords
+  'GROUPS',
+  'INTEGER',
+  'DEC',
+  'WORK',
+  'CHECKPOINT',
+  'FORCESCAN',
+  'FORCESEEK',
+  'NATIVE_COMPILATION',
+  'VIEW_METADATA',
+  'NUMERIC_ROUNDABORT',
+  'DATEFIRST',
+  'DATEFORMAT',
+  'LANGUAGE',
+  'LOCK_TIMEOUT',
+  'DEADLOCK_PRIORITY',
+  'CREATE OR ALTER',
+  'DROP TABLE IF EXISTS',
+  'DROP PROCEDURE IF EXISTS',
+  'DROP FUNCTION IF EXISTS',
+  'DROP VIEW IF EXISTS',
+  'DROP TRIGGER IF EXISTS',
+  'IF EXISTS',
+  'IF NOT EXISTS',
+  'AT TIME ZONE',
+  'ADD CONSTRAINT',
+  'DROP CONSTRAINT',
+  'SET NOCOUNT',
+  'COMMIT TRAN',
+  'COMMIT TRANSACTION',
+  'COMMIT WORK',
+  'ROLLBACK TRAN',
+  'ROLLBACK TRANSACTION',
+  'ROLLBACK WORK',
+  'SAVE TRAN',
+  'SAVE TRANSACTION',
 ]);
 
 const FUNCTIONS = new Set([
@@ -599,7 +637,15 @@ const TYPES_WITH_PARAMS = new Set([
 
 // Multi-word keywords: longest patterns first for greedy matching
 const MULTI_WORD_KEYWORDS: string[][] = [
+  // 4-word
+  ['DROP', 'TABLE', 'IF', 'EXISTS'],
+  ['DROP', 'PROCEDURE', 'IF', 'EXISTS'],
+  ['DROP', 'FUNCTION', 'IF', 'EXISTS'],
+  ['DROP', 'VIEW', 'IF', 'EXISTS'],
+  ['DROP', 'TRIGGER', 'IF', 'EXISTS'],
   // 3-word
+  ['CREATE', 'OR', 'ALTER'],
+  ['AT', 'TIME', 'ZONE'],
   ['IS', 'NOT', 'NULL'],
   ['LEFT', 'OUTER', 'JOIN'],
   ['RIGHT', 'OUTER', 'JOIN'],
@@ -642,6 +688,16 @@ const MULTI_WORD_KEYWORDS: string[][] = [
   ['EXECUTE', 'AS'],
   ['FOR', 'XML'],
   ['FOR', 'JSON'],
+  ['IF', 'EXISTS'],
+  ['IF', 'NOT'],
+  ['ADD', 'CONSTRAINT'],
+  ['DROP', 'CONSTRAINT'],
+  ['SET', 'NOCOUNT'],
+  ['SET', 'IDENTITY_INSERT'],
+  ['FETCH', 'NEXT'],
+  ['FETCH', 'FIRST'],
+  ['ROWS', 'ONLY'],
+  ['ROW', 'ONLY'],
 ];
 
 // Words that can immediately follow WITH as a procedure/function/view
@@ -702,6 +758,12 @@ const STATEMENT_START_KEYWORDS = new Set([
   'BEGIN CATCH',
   'BEGIN TRAN',
   'BEGIN TRANSACTION',
+  'CREATE OR ALTER',
+  'DROP TABLE IF EXISTS',
+  'SAVE',
+  'SAVE TRAN',
+  'SAVE TRANSACTION',
+  'CHECKPOINT',
 ]);
 
 // Object keywords that can follow CREATE or DROP to start a DDL statement.
@@ -1380,11 +1442,13 @@ class SqlFormatter {
       if (this.atEnd()) break;
       if (insideBlock && (this.isEndKeyword() || this.upper() === 'ELSE')) break;
 
+      const hasLeadingComments = this.peek()?.type === 'comment';
+
       if (first) {
         // Flush any content the caller left on the current line
         // (e.g., "BEGIN TRY" from formatBeginTryCatch)
         this.finishLine();
-      } else {
+      } else if (!hasLeadingComments) {
         // If the next statement is a GO batch separator, only break to a
         // new line (no extra blank lines), since GO conceptually belongs
         // directly after the previous batch as a confirmation token.
@@ -1396,6 +1460,7 @@ class SqlFormatter {
           this.blankLines(this.options.linesBetweenQueries);
         }
       }
+      this.finishLine();
       this.currentLine = ' '.repeat(this.indent);
       this.currentLineTouched = false;
 
@@ -1424,8 +1489,10 @@ class SqlFormatter {
       case 'DECLARE':
         return this.formatDeclare();
       case 'CREATE':
+      case 'CREATE OR ALTER':
         return this.formatCreate();
       case 'DROP':
+      case 'DROP TABLE IF EXISTS':
         return this.formatDrop();
       case 'INSERT':
       case 'INSERT INTO':
@@ -1455,6 +1522,9 @@ class SqlFormatter {
         return this.formatBeginTran();
       case 'COMMIT':
       case 'ROLLBACK':
+      case 'SAVE':
+      case 'SAVE TRAN':
+      case 'SAVE TRANSACTION':
         return this.formatTransactionCmd();
       case 'THROW':
       case 'RAISERROR':
@@ -1468,6 +1538,7 @@ class SqlFormatter {
       case 'SET':
         return this.formatSetStatement();
       case 'TRUNCATE':
+      case 'CHECKPOINT':
         return this.formatGenericLine();
       case 'USE':
         return this.formatUse();
@@ -1506,11 +1577,52 @@ class SqlFormatter {
 
   // --- CREATE TABLE ---
   private formatCreate(): void {
+    if (this.upper() === 'CREATE OR ALTER') {
+      this.emitToken(this.advance());
+      this.emit(' ');
+      if (this.upper() === 'TABLE') {
+        this.formatCreateTableBody();
+      } else {
+        this.writeInlineUntil(() => this.isStatementStart());
+      }
+      return;
+    }
     const u1 = this.upper(1);
     if (u1 === 'TABLE') {
       this.formatCreateTable();
     } else {
       this.formatGenericLine();
+    }
+  }
+
+  private formatCreateTableBody(): void {
+    this.emitToken(this.advance()); // TABLE
+    this.emit(' ');
+    this.writeTableRef();
+    if (this.peek()?.type !== 'oparen') return;
+
+    this.emit(' ');
+    this.emit(this.advance().value); // (
+
+    const colIndent = this.indent + INDENT_SIZE;
+    while (!this.atEnd() && this.peek()?.type !== 'cparen') {
+      if (this.peek()?.type === 'comment') {
+        this.emitCommentRun(colIndent);
+        continue;
+      }
+      this.newLine(colIndent);
+      this.writeInlineUntil(() => this.peek()?.type === 'comma' || this.peek()?.type === 'cparen');
+      if (this.peek()?.type === 'comma') {
+        this.emit(this.advance().value); // ,
+      }
+    }
+
+    this.newLine(this.indent);
+    if (this.peek()?.type === 'cparen') {
+      this.emit(this.advance().value); // )
+    }
+    if (this.peek()?.type === 'semicolon') {
+      this.emit(this.advance().value);
     }
   }
 
@@ -1533,6 +1645,10 @@ class SqlFormatter {
     // Column definitions - one per line
     const colIndent = stmtIndent + INDENT_SIZE;
     while (!this.atEnd() && this.peek()?.type !== 'cparen') {
+      if (this.peek()?.type === 'comment') {
+        this.emitCommentRun(colIndent);
+        continue;
+      }
       this.newLine(colIndent);
       this.writeInlineUntil(() => this.peek()?.type === 'comma' || this.peek()?.type === 'cparen');
       if (this.peek()?.type === 'comma') {
@@ -1553,11 +1669,14 @@ class SqlFormatter {
 
   // --- DROP ---
   private formatDrop(): void {
-    this.emitToken(this.advance()); // DROP
-    this.emit(' ');
-    this.emitToken(this.advance()); // TABLE/VIEW/etc
-    this.emit(' ');
-    this.writeInlineUntil(() => this.isStatementStart());
+    this.emitToken(this.advance()); // DROP or DROP TABLE IF EXISTS (merged)
+    if (!this.atEnd() && !this.isStatementStart() && this.peek()?.type !== 'semicolon') {
+      this.emit(' ');
+      this.writeInlineUntil(() => this.isStatementStart() || this.peek()?.type === 'semicolon');
+    }
+    if (this.peek()?.type === 'semicolon') {
+      this.emit(this.advance().value);
+    }
   }
 
   // --- INSERT ---
@@ -1613,6 +1732,12 @@ class SqlFormatter {
 
       const token = this.peek()!;
 
+      if (token.type === 'comment') {
+        this.emitCommentRun(stmtIndent);
+        prevToken = null;
+        continue;
+      }
+
       // Handle CASE expression
       if (token.type === 'word' && token.value.toUpperCase() === 'CASE') {
         if (this.needsSpaceBefore(token, prevToken)) this.emit(' ');
@@ -1629,18 +1754,6 @@ class SqlFormatter {
           this.writeInlineParens();
         }
         prevToken = makeToken('cparen', ')');
-        continue;
-      }
-
-      // Handle inline comments (same rules as writeInlineUntil)
-      if (token.type === 'comment') {
-        if (this.needsSpaceBefore(token, prevToken)) this.emit(' ');
-        this.advance();
-        this.emitCommentText(token.value);
-        if (token.value.startsWith('--') || token.value.includes('\n')) {
-          break;
-        }
-        prevToken = token;
         continue;
       }
 
@@ -1711,27 +1824,38 @@ class SqlFormatter {
       if (this.isClauseKeyword() || this.isStatementStart()) break;
       // Also stop at END keyword (for subqueries inside CASE)
       if (this.isEndKeyword()) break;
-      // Stop at close paren (for subqueries in parentheses)
-      if (this.peek()?.type === 'cparen') break;
+      // Stop at close paren or semicolon
+      if (this.peek()?.type === 'cparen' || this.peek()?.type === 'semicolon') break;
 
-      if (!firstCol) {
-        // Consume the comma token from the stream
-        if (this.peek()?.type === 'comma') this.advance();
+      if (!firstCol && this.peek()?.type === 'comma') {
+        this.advance(); // consume trailing comma from previous column
+      }
+
+      if (this.peek()?.type === 'comment') {
+        this.emitCommentRun(colIndent);
+        firstCol = false;
+        continue;
       }
 
       this.newLine(colIndent);
       this.writeInlineUntil(() => {
         if (this.peek()?.type === 'comma') return true;
         if (this.peek()?.type === 'cparen') return true;
+        if (this.peek()?.type === 'semicolon') return true;
         if (this.isClauseKeyword()) return true;
         if (this.isStatementStart()) return true;
         if (this.isEndKeyword()) return true;
         return false;
       });
 
-      // Emit the comma at the end of the column line (if more columns follow)
+      // Emit the comma or semicolon at the end of the column line
       if (this.peek()?.type === 'comma') {
         this.emit(',');
+      }
+      if (this.peek()?.type === 'semicolon') {
+        this.emit(';');
+        this.advance();
+        break;
       }
 
       firstCol = false;
@@ -1828,14 +1952,36 @@ class SqlFormatter {
       // isn't silently dropped by the caller's semicolon-skipping.
       if (this.peek()?.type === 'semicolon') {
         this.emit(this.advance().value);
-        continue;
+        break;
       }
 
       // Comments between clauses: emit on their own line(s) at the clause
-      // indent level, following the standard comment spacing rules.
+      // indent level if followed by a clause keyword. If followed by a new
+      // statement, break so formatStatementList handles them as leading comments.
       if (this.peek()?.type === 'comment') {
-        this.emitCommentRun(stmtIndent);
-        continue;
+        let offset = 1;
+        while (this.peek(offset)?.type === 'comment') offset++;
+        const nextTok = this.peek(offset);
+        const nextUpper = nextTok?.type === 'word' ? nextTok.upper : '';
+        const isClauseNext =
+          nextUpper === 'FROM' ||
+          nextUpper === 'WHERE' ||
+          nextUpper === 'GROUP BY' ||
+          nextUpper === 'ORDER BY' ||
+          nextUpper === 'HAVING' ||
+          nextUpper === 'OUTPUT' ||
+          nextUpper === 'OFFSET' ||
+          nextUpper === 'FOR XML' ||
+          nextUpper === 'FOR JSON' ||
+          nextUpper === 'ON' ||
+          JOIN_START_KEYWORDS.has(nextUpper);
+
+        if (isClauseNext) {
+          this.emitCommentRun(stmtIndent);
+          continue;
+        } else {
+          break;
+        }
       }
 
       if (u === 'FROM') {
@@ -2176,14 +2322,24 @@ class SqlFormatter {
   // --- BEGIN TRAN/TRANSACTION ---
   private formatBeginTran(): void {
     this.emitToken(this.advance()); // BEGIN TRAN or BEGIN TRANSACTION (merged)
+    if (this.peek()?.type === 'semicolon') {
+      this.emit(this.advance().value);
+    }
   }
 
   // --- Transaction commands ---
   private formatTransactionCmd(): void {
-    this.emitToken(this.advance()); // COMMIT or ROLLBACK
-    if (this.upper() === 'TRAN' || this.upper() === 'TRANSACTION') {
+    this.emitToken(this.advance()); // COMMIT, ROLLBACK, SAVE, COMMIT TRAN, SAVE TRAN, etc.
+    if (this.isWordAt(0, 'TRAN', 'TRANSACTION', 'WORK')) {
       this.emit(' ');
-      this.emitToken(this.advance()); // TRAN/TRANSACTION
+      this.emitToken(this.advance()); // TRAN/TRANSACTION/WORK
+    }
+    if (!this.atEnd() && !this.isStatementStart() && this.peek()?.type !== 'semicolon') {
+      this.emit(' ');
+      this.writeInlineUntil(() => this.isStatementStart() || this.peek()?.type === 'semicolon');
+    }
+    if (this.peek()?.type === 'semicolon') {
+      this.emit(this.advance().value);
     }
   }
 
@@ -2531,7 +2687,11 @@ export class TsqlFormattingProvider
   implements vscode.DocumentFormattingEditProvider, vscode.DocumentRangeFormattingEditProvider
 {
   provideDocumentFormattingEdits(document: vscode.TextDocument): vscode.TextEdit[] {
-    const fullRange = new vscode.Range(document.positionAt(0), document.positionAt(document.getText().length));
+    const vscodeMod: typeof import('vscode') = require('vscode');
+    const fullRange = new vscodeMod.Range(
+      document.positionAt(0),
+      document.positionAt(document.getText().length),
+    );
     return this.provideFormattingEdits(document, fullRange);
   }
 
@@ -2546,8 +2706,12 @@ export class TsqlFormattingProvider
     return this.provideFormattingEdits(document, range);
   }
 
-  private provideFormattingEdits(document: vscode.TextDocument, range: vscode.Range): vscode.TextEdit[] {
-    const config = vscode.workspace.getConfiguration('tsqlFormatter');
+  private provideFormattingEdits(
+    document: vscode.TextDocument,
+    range: vscode.Range,
+  ): vscode.TextEdit[] {
+    const vscodeMod: typeof import('vscode') = require('vscode');
+    const config = vscodeMod.workspace.getConfiguration('tsqlFormatter');
     const options: FormatterOptions = {
       breakOnKeywords: config.get<boolean>('breakOnKeywords', true),
       identifierCase: config.get<CaseOption>('identifierCase', 'preserve'),
@@ -2567,14 +2731,14 @@ export class TsqlFormattingProvider
         return [];
       }
 
-      return [vscode.TextEdit.replace(range, formatted)];
+      return [vscodeMod.TextEdit.replace(range, formatted)];
     } catch (err) {
       // Ensure we have an Error-like object
       const error = err instanceof Error ? err : new Error(String(err));
       getOutputChannel().appendLine(`[tsql-formatter] Formatting failed: ${error.message}`);
       getOutputChannel().appendLine(error.stack ?? 'no stack');
       getOutputChannel().show(true);
-      void vscode.window.showErrorMessage(
+      void vscodeMod.window.showErrorMessage(
         'tsql-formatter: failed to format document. See "TSQL Formatter" output for details.',
       );
       // Fall back to no edits so VS Code leaves the document unchanged
@@ -2585,11 +2749,16 @@ export class TsqlFormattingProvider
 
 let _outputChannel: vscode.OutputChannel | null = null;
 export function getOutputChannel(): vscode.OutputChannel {
-  if (!_outputChannel) _outputChannel = vscode.window.createOutputChannel('TSQL Formatter');
+  if (!_outputChannel) {
+    const vscodeMod: typeof import('vscode') = require('vscode');
+    _outputChannel = vscodeMod.window.createOutputChannel('TSQL Formatter');
+  }
   return _outputChannel;
 }
 
-function formatTsql(input: string, options: FormatterOptions): string {
+export { tokenize, mergeMultiWordKeywords, SqlFormatter };
+
+export function formatTsql(input: string, options: FormatterOptions): string {
   const normalized = input.replace(/\r\n?/g, '\n').trim();
   if (!normalized) {
     return input;
