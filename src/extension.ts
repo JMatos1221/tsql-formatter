@@ -6,9 +6,11 @@ export function activate(context: vscode.ExtensionContext): void {
     { language: 'sql', scheme: 'file' },
     { language: 'sql', scheme: 'untitled' },
   ];
+  const formatter = new TsqlFormattingProvider();
 
   context.subscriptions.push(
-    vscode.languages.registerDocumentFormattingEditProvider(selector, new TsqlFormattingProvider()),
+    vscode.languages.registerDocumentFormattingEditProvider(selector, formatter),
+    vscode.languages.registerDocumentRangeFormattingEditProvider(selector, formatter),
   );
 
   // Ensure the extension has an Output channel tab visible in the Output panel.
