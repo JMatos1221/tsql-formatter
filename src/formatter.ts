@@ -1039,6 +1039,12 @@ class SqlFormatter {
   private pos: number = 0;
   private lines: string[] = [];
   private currentLine: string = '';
+  // True once real content has been appended (via emit()) to currentLine
+  // since it was last reset to a fresh line. Lets finishLine() distinguish
+  // an untouched placeholder line (nothing to commit) from a deliberate
+  // blank line, so line-transition helpers can be called defensively
+  // without inventing extra blank lines.
+  private currentLineTouched: boolean = false;
   private indent: number = 0;
   private options: FormatterOptions;
 
@@ -1083,29 +1089,72 @@ class SqlFormatter {
   // --- Output helpers ---
   private emit(text: string): void {
     this.currentLine += text;
+    this.currentLineTouched = true;
   }
 
   private finishLine(): void {
+    if (!this.currentLineTouched) {
+      // Nothing has been written to this line since it was last reset (e.g.
+      // a fresh placeholder line left ready for content that never arrived
+      // before another line-transition call). Treat as a no-op instead of
+      // inventing a blank line, so defensive newLine()/finishLine() calls
+      // that follow standalone comment handling don't add unwanted blanks.
+      this.currentLine = '';
+      return;
+    }
     // Preserve trailing spaces on content lines (used for continuation indicators)
     // Only trim whitespace-only lines to empty strings
     const line = this.currentLine;
-    this.lines.push(line.trim() === '' ? '' : line);
+    const isBlank = line.trim() === '';
+    // Avoid committing a second consecutive blank line: this happens when a
+    // blank-line separator has just been inserted (e.g. after a block
+    // comment) and currentLine is still a blank/indent-only line by the
+    // time the next line transition commits it.
+    if (isBlank && this.lines.length > 0 && this.lines[this.lines.length - 1] === '') {
+      this.currentLine = '';
+      this.currentLineTouched = false;
+      return;
+    }
+    this.lines.push(isBlank ? '' : line);
     this.currentLine = '';
+    this.currentLineTouched = false;
   }
 
   private newLine(indentSpaces?: number): void {
     this.finishLine();
     this.currentLine = ' '.repeat(indentSpaces ?? this.indent);
+    this.currentLineTouched = false;
   }
 
+  // Ensure at least `count` blank lines separate the previous content from
+  // whatever comes next. If a comment run already inserted a trailing blank
+  // line (e.g. after a block comment), this tops up to `count` rather than
+  // stacking `count` additional blanks on top of it.
   private blankLines(count: number): void {
     this.finishLine();
-    for (let i = 0; i < count; i++) this.lines.push('');
+    let existingBlanks = 0;
+    while (
+      existingBlanks < this.lines.length &&
+      this.lines[this.lines.length - 1 - existingBlanks] === ''
+    ) {
+      existingBlanks++;
+    }
+    for (let i = existingBlanks; i < count; i++) this.lines.push('');
+  }
+
+  // Push a single blank separator line, avoiding a duplicate blank line if
+  // the previously emitted line is already blank (or nothing has been
+  // emitted yet, e.g. at the very start of the output).
+  private pushBlankLineIfNeeded(): void {
+    if (this.lines.length === 0) return;
+    if (this.lines[this.lines.length - 1] === '') return;
+    this.lines.push('');
   }
 
   private lineAt(col: number): void {
     this.finishLine();
     this.currentLine = ' '.repeat(col);
+    this.currentLineTouched = false;
   }
 
   private wrapBeforeTokenIfNeeded(token: Token, tokenText: string): void {
@@ -1163,6 +1212,51 @@ class SqlFormatter {
     for (let i = 1; i < parts.length; i++) {
       this.finishLine();
       this.currentLine = parts[i].trimEnd();
+      this.currentLineTouched = true;
+    }
+  }
+
+  // Emit a run of consecutive standalone comment tokens (comments that sit
+  // on their own line rather than trailing after code), applying the
+  // formatter's comment spacing rules:
+  //  - A blank line is inserted above the first comment of the run (unless
+  //    it's the very first thing in the output, or already preceded by a
+  //    blank line).
+  //  - Block comments (/* ... */) always get a blank line before and after
+  //    them, even in the middle of a run of comments.
+  //  - Consecutive single-line (--) comments are kept one per line with no
+  //    blank lines between them.
+  // Each comment's line is committed immediately (rather than left pending
+  // on currentLine), so a single-line comment - which always runs to the
+  // end of its line - can never be followed by more content on that same
+  // line. On exit, currentLine is a fresh `indent`-space line ready for
+  // whatever comes next.
+  // Note: the loop only ever consumes tokens of type 'comment', so it always
+  // stops at (and never absorbs) the first non-comment token - e.g. END /
+  // ELSE inside a BEGIN...END block - leaving callers' own block-boundary
+  // checks to fire immediately afterward exactly as before.
+  private emitCommentRun(indent: number): void {
+    let first = true;
+    while (!this.atEnd() && this.peek()?.type === 'comment') {
+      const token = this.advance();
+      const isBlockComment = token.value.startsWith('/*');
+
+      if (first || isBlockComment) {
+        this.finishLine();
+        this.pushBlankLineIfNeeded();
+      }
+      this.currentLine = ' '.repeat(indent);
+      this.currentLineTouched = false;
+      this.emitCommentText(token.value);
+
+      this.finishLine();
+      if (isBlockComment) {
+        this.pushBlankLineIfNeeded();
+      }
+      this.currentLine = ' '.repeat(indent);
+      this.currentLineTouched = false;
+
+      first = false;
     }
   }
 
@@ -1303,17 +1397,11 @@ class SqlFormatter {
         }
       }
       this.currentLine = ' '.repeat(this.indent);
+      this.currentLineTouched = false;
 
-      // Emit any comment lines that immediately precede the next statement.
-      // They are associated with the statement, so no blank line is inserted
-      // between the comment block and the code that follows it.
-      while (!this.atEnd() && this.peek()?.type === 'comment') {
-        this.emitCommentText(this.advance().value);
-        this.newLine(this.indent);
-        // Re-check block exit conditions in case the comment was the last
-        // token before END / ELSE inside a BEGIN...END block.
-        if (insideBlock && (this.isEndKeyword() || this.upper() === 'ELSE')) break;
-      }
+      // Emit any comment lines that immediately precede the next statement,
+      // following the standard comment spacing rules (see emitCommentRun).
+      this.emitCommentRun(this.indent);
       if (this.atEnd()) break;
       if (insideBlock && (this.isEndKeyword() || this.upper() === 'ELSE')) break;
 
@@ -1743,11 +1831,10 @@ class SqlFormatter {
         continue;
       }
 
-      // Comments between clauses: emit on their own line at the clause indent
-      // level so they stay visually associated with the surrounding SQL.
+      // Comments between clauses: emit on their own line(s) at the clause
+      // indent level, following the standard comment spacing rules.
       if (this.peek()?.type === 'comment') {
-        this.newLine(stmtIndent);
-        this.emitCommentText(this.advance().value);
+        this.emitCommentRun(stmtIndent);
         continue;
       }
 
@@ -2391,11 +2478,7 @@ class SqlFormatter {
     const savedIndent = this.indent;
     this.indent = subIndent;
     // Emit any comment tokens that appear before SELECT
-    while (this.peek()?.type === 'comment') {
-      const cmt = this.advance();
-      this.emitCommentText(cmt.value);
-      this.newLine(subIndent);
-    }
+    this.emitCommentRun(subIndent);
     if (this.upper() === 'SELECT') {
       this.formatSelectQuery(subIndent);
     }
