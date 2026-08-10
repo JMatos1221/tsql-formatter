@@ -1231,6 +1231,10 @@ class SqlFormatter {
   // end of its line - can never be followed by more content on that same
   // line. On exit, currentLine is a fresh `indent`-space line ready for
   // whatever comes next.
+  // Note: the loop only ever consumes tokens of type 'comment', so it always
+  // stops at (and never absorbs) the first non-comment token - e.g. END /
+  // ELSE inside a BEGIN...END block - leaving callers' own block-boundary
+  // checks to fire immediately afterward exactly as before.
   private emitCommentRun(indent: number): void {
     let first = true;
     while (!this.atEnd() && this.peek()?.type === 'comment') {
