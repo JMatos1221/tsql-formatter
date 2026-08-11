@@ -1284,10 +1284,8 @@ class SqlFormatter {
   //  - A blank line is inserted above the first comment of the run (unless
   //    it's the very first thing in the output, or already preceded by a
   //    blank line).
-  //  - Block comments (/* ... */) always get a blank line before and after
-  //    them, even in the middle of a run of comments.
-  //  - Consecutive single-line (--) comments are kept one per line with no
-  //    blank lines between them.
+  //  - Consecutive comments (single-line or block) are emitted one per line
+  //    with no forced blank line between the last comment and following code.
   // Each comment's line is committed immediately (rather than left pending
   // on currentLine), so a single-line comment - which always runs to the
   // end of its line - can never be followed by more content on that same
@@ -1301,9 +1299,8 @@ class SqlFormatter {
     let first = true;
     while (!this.atEnd() && this.peek()?.type === 'comment') {
       const token = this.advance();
-      const isBlockComment = token.value.startsWith('/*');
 
-      if (first || isBlockComment) {
+      if (first) {
         this.finishLine();
         this.pushBlankLineIfNeeded();
       }
@@ -1312,9 +1309,6 @@ class SqlFormatter {
       this.emitCommentText(token.value);
 
       this.finishLine();
-      if (isBlockComment) {
-        this.pushBlankLineIfNeeded();
-      }
       this.currentLine = ' '.repeat(indent);
       this.currentLineTouched = false;
 
@@ -2427,11 +2421,9 @@ class SqlFormatter {
     if (this.peek()?.type === 'semicolon') {
       this.emit(this.advance().value);
     }
-    // Inline comment on the GO line
+    // Inline comments are emitted as standalone comments.
     if (this.peek()?.type === 'comment') {
-      this.emit(' ');
-      const c = this.advance();
-      this.emitCommentText(c.value);
+      this.emitCommentRun(this.indent);
     }
   }
 
@@ -2523,23 +2515,12 @@ class SqlFormatter {
     while (!this.atEnd() && !stop()) {
       const token = this.peek()!;
 
-      // Handle comment tokens inline.
-      // • Single-line (--) comments terminate the current logical line; break out
-      //   so the caller's next newLine() call correctly flushes the comment line
-      //   and subsequent tokens get their own properly-indented output line.
-      // • Block comments (/* */) without newlines are emitted in-place.
-      // • Multi-line block comments are split across output lines by emitCommentText;
-      //   we then break so the caller can re-establish indentation.
+      // Handle inline comments as standalone comment runs so comments never
+      // share a line with code.
       if (token.type === 'comment') {
-        if (this.needsSpaceBefore(token, prevToken)) this.emit(' ');
-        this.advance();
-        this.emitCommentText(token.value);
-        if (token.value.startsWith('--') || token.value.includes('\n')) {
-          // Comment terminated the logical line; let the caller start a fresh one.
-          break;
-        }
-        prevToken = token;
-        continue;
+        const commentIndent = this.currentLine.length - this.currentLine.trimStart().length;
+        this.emitCommentRun(commentIndent);
+        break;
       }
 
       // Handle parenthesized expressions inline
@@ -2602,16 +2583,12 @@ class SqlFormatter {
         continue;
       }
 
-      // Handle comment tokens (same rules as writeInlineUntil)
+      // Handle inline comments as standalone comment runs so comments never
+      // share a line with code.
       if (token.type === 'comment') {
-        if (this.needsSpaceBefore(token, prevToken)) this.emit(' ');
-        this.advance();
-        this.emitCommentText(token.value);
-        if (token.value.startsWith('--') || token.value.includes('\n')) {
-          break;
-        }
-        prevToken = token;
-        continue;
+        const commentIndent = this.currentLine.length - this.currentLine.trimStart().length;
+        this.emitCommentRun(commentIndent);
+        break;
       }
 
       this.advance();

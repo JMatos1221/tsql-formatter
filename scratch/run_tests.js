@@ -40,17 +40,17 @@ test('Sequential single-line comments: grouped together, blank line before first
 });
 
 // 2. Block Comment Rules
-test('Multi-line block comment: blank line before AND after', () => {
+test('Multi-line block comment: blank line before, then code on next line', () => {
   const input = `SELECT 1;\n/* block comment */\nSELECT 2;`;
   const result = formatTsql(input, defaultOptions);
-  const expected = `SELECT\n    1;\n\n/* block comment */\n\nSELECT\n    2;\n`;
+  const expected = `SELECT\n    1;\n\n/* block comment */\nSELECT\n    2;\n`;
   assert.strictEqual(result, expected);
 });
 
 test('Mixed comments: single and block comments combined', () => {
   const input = `SELECT 1;\n-- comment 1\n/* block comment */\n-- comment 2\nSELECT 2;`;
   const result = formatTsql(input, defaultOptions);
-  const expected = `SELECT\n    1;\n\n-- comment 1\n\n/* block comment */\n\n-- comment 2\nSELECT\n    2;\n`;
+  const expected = `SELECT\n    1;\n\n-- comment 1\n/* block comment */\n-- comment 2\nSELECT\n    2;\n`;
   assert.strictEqual(result, expected);
 });
 
@@ -59,6 +59,20 @@ test('Single-line comment before column in SELECT list', () => {
   const input = `SELECT id,\n-- comment for name\nname FROM users;`;
   const result = formatTsql(input, defaultOptions);
   const expected = `SELECT\n    id,\n\n    -- comment for name\n    name\nFROM users;\n`;
+  assert.strictEqual(result, expected);
+});
+
+test('Trailing single-line comment becomes standalone line', () => {
+  const input = `SELECT id, -- primary key\nname FROM users;`;
+  const result = formatTsql(input, defaultOptions);
+  const expected = `SELECT\n    id,\n\n    -- primary key\n    name\nFROM users;\n`;
+  assert.strictEqual(result, expected);
+});
+
+test('Inline block comment becomes standalone line', () => {
+  const input = `SELECT id, /* primary key */ name FROM users;`;
+  const result = formatTsql(input, defaultOptions);
+  const expected = `SELECT\n    id,\n\n    /* primary key */\n    name\nFROM users;\n`;
   assert.strictEqual(result, expected);
 });
 

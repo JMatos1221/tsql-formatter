@@ -49,11 +49,12 @@ Clean T-SQL Formatter enforces consistent whitespace rules for comments to ensur
 - **Single-Line Comments (`--`)**:
   - Inserted with a blank line **before** the comment (or the first comment in a sequential run), unless it is at the very beginning of the document or already preceded by a blank line.
   - Sequential `--` comments are kept on consecutive lines without blank lines in between.
-  - **No blank line after** single-line comments — the last comment in a run sits directly above the line of code it describes.
+  - The following code always starts on a new line (comments never share a line with code).
 - **Multi-Line / Block Comments (`/* ... */`)**:
-  - Always formatted with a blank line **before** and a blank line **after** the block comment.
+  - Formatted with a blank line **before** the block comment.
+  - The following code always starts on a new line (comments never share a line with code).
 - **Inline Comments**:
-  - Trailing comments at the end of a code line (e.g., `id, -- primary key`) are preserved on that line with appropriate spacing.
+  - Trailing comments at the end of a code line (e.g., `id, -- primary key`) are moved to their own standalone comment lines.
 
 ---
 
@@ -187,7 +188,6 @@ SELECT
 FROM users;
 
 /* block comment */
-
 SELECT
     2;
 ```
