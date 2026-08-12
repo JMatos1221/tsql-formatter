@@ -35,10 +35,16 @@ interface Token {
   // upper-cased form, often several times per token; computing it once here
   // avoids repeated toUpperCase() calls on the same string.
   upper: string;
+  hasPrecedingNewline: boolean;
 }
 
-function makeToken(type: Token['type'], value: string): Token {
-  return { type, value, upper: type === 'word' ? value.toUpperCase() : '' };
+function makeToken(type: Token['type'], value: string, hasPrecedingNewline = false): Token {
+  return {
+    type,
+    value,
+    upper: type === 'word' ? value.toUpperCase() : '',
+    hasPrecedingNewline,
+  };
 }
 
 // --- Keyword and function sets ---
@@ -406,6 +412,12 @@ const KEYWORDS = new Set([
   'DROP FUNCTION IF EXISTS',
   'DROP VIEW IF EXISTS',
   'DROP TRIGGER IF EXISTS',
+  'DROP SCHEMA IF EXISTS',
+  'DROP DATABASE IF EXISTS',
+  'DROP TYPE IF EXISTS',
+  'DROP SEQUENCE IF EXISTS',
+  'DROP SYNONYM IF EXISTS',
+  'DROP INDEX IF EXISTS',
   'IF EXISTS',
   'IF NOT EXISTS',
   'AT TIME ZONE',
@@ -420,6 +432,26 @@ const KEYWORDS = new Set([
   'ROLLBACK WORK',
   'SAVE TRAN',
   'SAVE TRANSACTION',
+  'REVERT',
+  'VECTOR',
+  'BULK',
+  'SYSTEM_TIME',
+  'SHORTEST_PATH',
+  'MATCH',
+  'CONTAINED',
+  'NO',
+  'ACTION',
+  'ROLE',
+  'LOGIN',
+  'USER',
+  'PERMISSIONS',
+  'FOR SYSTEM_TIME',
+  'BULK INSERT',
+  'NO ACTION',
+  'SET NULL',
+  'SET DEFAULT',
+  'AS OF',
+  'CONTAINED IN',
 ]);
 
 const FUNCTIONS = new Set([
@@ -617,6 +649,8 @@ const FUNCTIONS = new Set([
   'CURRENT_TIMEZONE_ID',
   // Metadata (additional)
   'OBJECTPROPERTYEX',
+  // AI / Vector functions (SQL Server 2025)
+  'VECTOR_DISTANCE',
 ]);
 
 // Data types that take a size/precision parameter in parentheses
@@ -633,6 +667,7 @@ const TYPES_WITH_PARAMS = new Set([
   'DATETIME2',
   'DATETIMEOFFSET',
   'TIME',
+  'VECTOR',
 ]);
 
 // Multi-word keywords: longest patterns first for greedy matching
@@ -643,6 +678,13 @@ const MULTI_WORD_KEYWORDS: string[][] = [
   ['DROP', 'FUNCTION', 'IF', 'EXISTS'],
   ['DROP', 'VIEW', 'IF', 'EXISTS'],
   ['DROP', 'TRIGGER', 'IF', 'EXISTS'],
+  ['DROP', 'SCHEMA', 'IF', 'EXISTS'],
+  ['DROP', 'DATABASE', 'IF', 'EXISTS'],
+  ['DROP', 'TYPE', 'IF', 'EXISTS'],
+  ['DROP', 'SEQUENCE', 'IF', 'EXISTS'],
+  ['DROP', 'SYNONYM', 'IF', 'EXISTS'],
+  ['DROP', 'INDEX', 'IF', 'EXISTS'],
+  ['WITH', 'GRANT', 'OPTION'],
   // 3-word
   ['CREATE', 'OR', 'ALTER'],
   ['AT', 'TIME', 'ZONE'],
@@ -651,6 +693,9 @@ const MULTI_WORD_KEYWORDS: string[][] = [
   ['RIGHT', 'OUTER', 'JOIN'],
   ['FULL', 'OUTER', 'JOIN'],
   ['NEXT', 'VALUE', 'FOR'],
+  ['FOR', 'SYSTEM_TIME'],
+  ['CONTAINED', 'IN'],
+  ['AS', 'OF'],
   // 2-word
   ['GROUP', 'BY'],
   ['ORDER', 'BY'],
@@ -698,6 +743,10 @@ const MULTI_WORD_KEYWORDS: string[][] = [
   ['FETCH', 'FIRST'],
   ['ROWS', 'ONLY'],
   ['ROW', 'ONLY'],
+  ['BULK', 'INSERT'],
+  ['NO', 'ACTION'],
+  ['SET', 'NULL'],
+  ['SET', 'DEFAULT'],
 ];
 
 // Words that can immediately follow WITH as a procedure/function/view
@@ -760,10 +809,22 @@ const STATEMENT_START_KEYWORDS = new Set([
   'BEGIN TRANSACTION',
   'CREATE OR ALTER',
   'DROP TABLE IF EXISTS',
+  'DROP PROCEDURE IF EXISTS',
+  'DROP FUNCTION IF EXISTS',
+  'DROP VIEW IF EXISTS',
+  'DROP TRIGGER IF EXISTS',
+  'DROP SCHEMA IF EXISTS',
+  'DROP DATABASE IF EXISTS',
+  'DROP TYPE IF EXISTS',
+  'DROP SEQUENCE IF EXISTS',
+  'DROP SYNONYM IF EXISTS',
+  'DROP INDEX IF EXISTS',
   'SAVE',
   'SAVE TRAN',
   'SAVE TRANSACTION',
   'CHECKPOINT',
+  'BULK INSERT',
+  'REVERT',
 ]);
 
 // Object keywords that can follow CREATE or DROP to start a DDL statement.
@@ -845,12 +906,21 @@ function tokenize(input: string): Token[] {
   const tokens: Token[] = [];
   const len = input.length;
   let i = 0;
+  let hasNewline = true;
+
+  const push = (type: Token['type'], value: string) => {
+    tokens.push(makeToken(type, value, hasNewline));
+    hasNewline = false;
+  };
 
   while (i < len) {
     const code = input.charCodeAt(i);
 
     // Skip whitespace
     if (isWhitespaceCode(code)) {
+      if (input[i] === '\n' || input[i] === '\r') {
+        hasNewline = true;
+      }
       i++;
       continue;
     }
@@ -868,7 +938,7 @@ function tokenize(input: string): Token[] {
           end++;
         }
       }
-      tokens.push(makeToken('string', input.slice(i, end)));
+      push('string', input.slice(i, end));
       i = end;
       continue;
     }
@@ -886,7 +956,7 @@ function tokenize(input: string): Token[] {
           end++;
         }
       }
-      tokens.push(makeToken('string', input.slice(i, end)));
+      push('string', input.slice(i, end));
       i = end;
       continue;
     }
@@ -895,7 +965,7 @@ function tokenize(input: string): Token[] {
     if (input[i] === '-' && input[i + 1] === '-') {
       let end = i + 2;
       while (end < len && input[end] !== '\n') end++;
-      tokens.push(makeToken('comment', input.slice(i, end).trim()));
+      push('comment', input.slice(i, end).trim());
       i = end;
       continue;
     }
@@ -905,7 +975,7 @@ function tokenize(input: string): Token[] {
       let end = i + 2;
       while (end < len && !(input[end] === '*' && input[end + 1] === '/')) end++;
       if (end < len) end += 2; // skip past closing */; if unclosed, end stays at input.length
-      tokens.push(makeToken('comment', input.slice(i, end)));
+      push('comment', input.slice(i, end));
       i = end;
       continue;
     }
@@ -915,7 +985,7 @@ function tokenize(input: string): Token[] {
       let end = i + 1;
       while (end < len && input[end] !== ']') end++;
       if (end < len) end++; // include closing ]
-      tokens.push(makeToken('word', input.slice(i, end)));
+      push('word', input.slice(i, end));
       i = end;
       continue;
     }
@@ -925,7 +995,7 @@ function tokenize(input: string): Token[] {
       let end = i + 1;
       while (end < len && input[end] !== '"') end++;
       if (end < len) end++; // include closing "
-      tokens.push(makeToken('word', input.slice(i, end)));
+      push('word', input.slice(i, end));
       i = end;
       continue;
     }
@@ -938,7 +1008,7 @@ function tokenize(input: string): Token[] {
       else if (input[i] === '@' || input[i] === '#') end = i + 1;
 
       while (end < len && isWordCharCode(input.charCodeAt(end))) end++;
-      tokens.push(makeToken('word', input.slice(i, end)));
+      push('word', input.slice(i, end));
       i = end;
       continue;
     }
@@ -947,74 +1017,74 @@ function tokenize(input: string): Token[] {
     if (isDigitCode(code)) {
       let end = i;
       while (end < len && (isDigitCode(input.charCodeAt(end)) || input[end] === '.')) end++;
-      tokens.push(makeToken('number', input.slice(i, end)));
+      push('number', input.slice(i, end));
       i = end;
       continue;
     }
 
     // Punctuation and operators
     if (input[i] === '(') {
-      tokens.push(makeToken('oparen', '('));
+      push('oparen', '(');
       i++;
       continue;
     }
     if (input[i] === ')') {
-      tokens.push(makeToken('cparen', ')'));
+      push('cparen', ')');
       i++;
       continue;
     }
     if (input[i] === ',') {
-      tokens.push(makeToken('comma', ','));
+      push('comma', ',');
       i++;
       continue;
     }
     if (input[i] === '.') {
-      tokens.push(makeToken('dot', '.'));
+      push('dot', '.');
       i++;
       continue;
     }
     if (input[i] === ';') {
-      tokens.push(makeToken('semicolon', ';'));
+      push('semicolon', ';');
       i++;
       continue;
     }
     if (input[i] === '*') {
-      tokens.push(makeToken('star', '*'));
+      push('star', '*');
       i++;
       continue;
     }
 
     // Multi-char operators
     if (input[i] === '<' && input[i + 1] === '>') {
-      tokens.push(makeToken('operator', '<>'));
+      push('operator', '<>');
       i += 2;
       continue;
     }
     if (input[i] === '!' && input[i + 1] === '=') {
-      tokens.push(makeToken('operator', '!='));
+      push('operator', '!=');
       i += 2;
       continue;
     }
     if (input[i] === '>' && input[i + 1] === '=') {
-      tokens.push(makeToken('operator', '>='));
+      push('operator', '>=');
       i += 2;
       continue;
     }
     if (input[i] === '<' && input[i + 1] === '=') {
-      tokens.push(makeToken('operator', '<='));
+      push('operator', '<=');
       i += 2;
       continue;
     }
 
     // Single char operators
     if ('=<>+-/%'.includes(input[i])) {
-      tokens.push(makeToken('operator', input[i]));
+      push('operator', input[i]);
       i++;
       continue;
     }
 
     // Anything else (e.g. brackets)
-    tokens.push(makeToken('operator', input[i]));
+    push('operator', input[i]);
     i++;
   }
 
@@ -1061,7 +1131,12 @@ function mergeMultiWordKeywords(tokens: Token[]): Token[] {
               .slice(i, i + pattern.length)
               .map((t) => t.value)
               .join(' ');
-            result.push({ type: 'word', value, upper: pattern.join(' ') });
+            result.push({
+              type: 'word',
+              value,
+              upper: pattern.join(' '),
+              hasPrecedingNewline: tok.hasPrecedingNewline,
+            });
             i += pattern.length;
             matched = true;
             break;
@@ -1493,6 +1568,16 @@ class SqlFormatter {
         return this.formatCreate();
       case 'DROP':
       case 'DROP TABLE IF EXISTS':
+      case 'DROP PROCEDURE IF EXISTS':
+      case 'DROP FUNCTION IF EXISTS':
+      case 'DROP VIEW IF EXISTS':
+      case 'DROP TRIGGER IF EXISTS':
+      case 'DROP SCHEMA IF EXISTS':
+      case 'DROP DATABASE IF EXISTS':
+      case 'DROP TYPE IF EXISTS':
+      case 'DROP SEQUENCE IF EXISTS':
+      case 'DROP SYNONYM IF EXISTS':
+      case 'DROP INDEX IF EXISTS':
         return this.formatDrop();
       case 'INSERT':
       case 'INSERT INTO':
@@ -1505,6 +1590,12 @@ class SqlFormatter {
       case 'SELECT':
         return this.formatSelectStatement();
       case 'MERGE':
+      case 'BULK':
+      case 'BULK INSERT':
+      case 'REVERT':
+      case 'GRANT':
+      case 'REVOKE':
+      case 'DENY':
         return this.formatInlineStatementToTerminator();
       case 'WITH':
         return this.formatWith();
@@ -1544,10 +1635,6 @@ class SqlFormatter {
         return this.formatUse();
       case 'GO':
         return this.formatGo();
-      case 'GRANT':
-      case 'REVOKE':
-      case 'DENY':
-        return this.formatInlineStatementToTerminator();
       case 'ALTER':
       case 'OPEN':
       case 'CLOSE':
@@ -1696,6 +1783,10 @@ class SqlFormatter {
       () => this.isWordAt(0, 'VALUES', 'SELECT', 'EXEC', 'EXECUTE') || this.isStatementStart(),
     );
 
+    if (this.peek()?.type === 'comment') {
+      this.emitCommentRun(stmtIndent);
+    }
+
     if (this.upper() === 'VALUES') {
       this.newLine(stmtIndent);
       this.emitToken(this.advance()); // VALUES
@@ -1790,6 +1881,9 @@ class SqlFormatter {
   }
 
   private formatSelectQuery(stmtIndent: number): void {
+    if (this.peek()?.type === 'comment') {
+      this.emitCommentRun(stmtIndent);
+    }
     this.emitToken(this.advance()); // SELECT
 
     // DISTINCT / TOP N - keep on SELECT line
@@ -1871,6 +1965,9 @@ class SqlFormatter {
     // CTE definitions (possibly multiple, comma-separated)
     let firstCte = true;
     while (!this.atEnd()) {
+      if (this.peek()?.type === 'comment') {
+        this.emitCommentRun(stmtIndent);
+      }
       if (!firstCte) {
         this.emit(',');
         this.newLine(stmtIndent);
@@ -1886,6 +1983,10 @@ class SqlFormatter {
         this.emit(' ');
       }
 
+      if (this.peek()?.type === 'comment') {
+        this.emitCommentRun(stmtIndent);
+      }
+
       // (
       if (this.peek()?.type === 'oparen') {
         this.emit(this.advance().value); // (
@@ -1894,7 +1995,15 @@ class SqlFormatter {
         const bodyIndent = stmtIndent + INDENT_SIZE;
         this.newLine(bodyIndent);
         this.indent = bodyIndent;
-        this.formatSelectQuery(bodyIndent);
+        if (this.peek()?.type === 'comment') {
+          this.emitCommentRun(bodyIndent);
+        }
+        if (this.upper() === 'SELECT') {
+          this.formatSelectQuery(bodyIndent);
+        }
+        if (this.peek()?.type === 'comment') {
+          this.emitCommentRun(bodyIndent);
+        }
         this.indent = stmtIndent;
 
         // )
@@ -1906,11 +2015,19 @@ class SqlFormatter {
 
       firstCte = false;
 
+      if (this.peek()?.type === 'comment') {
+        this.emitCommentRun(stmtIndent);
+      }
+
       // Check for another CTE (comma separator).
       // The comma is consumed here; it is re-emitted via this.emit(",") at the
       // top of the next iteration so it appears before the next CTE name.
       if (this.peek()?.type !== 'comma') break;
       this.advance(); // consume comma
+    }
+
+    if (this.peek()?.type === 'comment') {
+      this.emitCommentRun(stmtIndent);
     }
 
     // The DML statement after the CTE
@@ -1919,6 +2036,9 @@ class SqlFormatter {
   }
 
   private formatDmlAfterCte(): void {
+    if (this.peek()?.type === 'comment') {
+      this.emitCommentRun(this.indent);
+    }
     switch (this.upper()) {
       case 'UPDATE':
         return this.formatUpdate();
@@ -2221,6 +2341,10 @@ class SqlFormatter {
         this.atEnd(),
     );
 
+    if (this.peek()?.type === 'comment') {
+      this.emitCommentRun(stmtIndent);
+    }
+
     if (this.upper() === 'BEGIN') {
       // Block body
       this.newLine(stmtIndent);
@@ -2231,8 +2355,6 @@ class SqlFormatter {
       this.formatBeginTryCatch();
     } else {
       // Single statement body, indented
-      // Trailing space before continuation
-      this.emit(' ');
       this.indent = stmtIndent + INDENT_SIZE;
       this.newLine();
       this.formatStatement();
@@ -2240,23 +2362,30 @@ class SqlFormatter {
     }
 
     // ELSE
+    if (this.peek()?.type === 'comment') {
+      let offset = 1;
+      while (this.peek(offset)?.type === 'comment') offset++;
+      if (this.peek(offset)?.upper === 'ELSE') {
+        this.emitCommentRun(stmtIndent);
+      }
+    }
+
     if (this.upper() === 'ELSE') {
-      // Trailing space on END line before ELSE
-      this.emit(' ');
       this.newLine(stmtIndent);
       this.emitToken(this.advance()); // ELSE
+
+      if (this.peek()?.type === 'comment') {
+        this.emitCommentRun(stmtIndent);
+      }
 
       if (this.upper() === 'IF') {
         // ELSE IF chain
         this.emit(' ');
         this.formatIf();
       } else if (this.upper() === 'BEGIN') {
-        // Trailing space on ELSE line before BEGIN
-        this.emit(' ');
         this.newLine(stmtIndent);
         this.formatBeginEndBlock();
       } else if (this.upper() === 'BEGIN TRY') {
-        this.emit(' ');
         this.newLine(stmtIndent);
         this.formatBeginTryCatch();
       } else {
@@ -2374,12 +2503,15 @@ class SqlFormatter {
         this.atEnd(),
     );
 
+    if (this.peek()?.type === 'comment') {
+      this.emitCommentRun(stmtIndent);
+    }
+
     if (this.upper() === 'BEGIN') {
       this.newLine(stmtIndent);
       this.formatBeginEndBlock();
     } else {
       // Single statement body, indented
-      this.emit(' ');
       this.indent = stmtIndent + INDENT_SIZE;
       this.newLine();
       this.formatStatement();
@@ -2524,18 +2656,18 @@ class SqlFormatter {
       const token = this.peek()!;
 
       // Handle comment tokens inline.
-      // • Single-line (--) comments terminate the current logical line; break out
-      //   so the caller's next newLine() call correctly flushes the comment line
-      //   and subsequent tokens get their own properly-indented output line.
-      // • Block comments (/* */) without newlines are emitted in-place.
-      // • Multi-line block comments are split across output lines by emitCommentText;
-      //   we then break so the caller can re-establish indentation.
+      // • Standalone comments (with hasPrecedingNewline = true) stop inline processing
+      //   so statement/clause handlers process them via emitCommentRun.
+      // • Inline trailing comments (on the same line as code) are emitted in-place.
       if (token.type === 'comment') {
+        if (token.hasPrecedingNewline) {
+          break;
+        }
         if (this.needsSpaceBefore(token, prevToken)) this.emit(' ');
         this.advance();
         this.emitCommentText(token.value);
         if (token.value.startsWith('--') || token.value.includes('\n')) {
-          // Comment terminated the logical line; let the caller start a fresh one.
+          // Inline trailing comment terminated the logical line; let the caller start a fresh one.
           break;
         }
         prevToken = token;
@@ -2604,6 +2736,14 @@ class SqlFormatter {
 
       // Handle comment tokens (same rules as writeInlineUntil)
       if (token.type === 'comment') {
+        if (token.hasPrecedingNewline) {
+          this.newLine(this.indent + INDENT_SIZE);
+          this.advance();
+          this.emitCommentText(token.value);
+          this.newLine(this.indent + INDENT_SIZE);
+          prevToken = token;
+          continue;
+        }
         if (this.needsSpaceBefore(token, prevToken)) this.emit(' ');
         this.advance();
         this.emitCommentText(token.value);
@@ -2637,6 +2777,9 @@ class SqlFormatter {
     this.emitCommentRun(subIndent);
     if (this.upper() === 'SELECT') {
       this.formatSelectQuery(subIndent);
+    }
+    if (this.peek()?.type === 'comment') {
+      this.emitCommentRun(subIndent);
     }
     this.indent = savedIndent;
     this.newLine(baseIndent);
