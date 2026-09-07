@@ -1,0 +1,8 @@
+.vscode/**
+.gitignore
+.prettierrc
+.prettierignore
+tsconfig.json
+src/**
+scratch/**
+**/*.map

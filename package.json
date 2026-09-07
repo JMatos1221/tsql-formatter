@@ -21,7 +21,7 @@
     "extension"
   ],
   "engines": {
-    "vscode": "^1.125.0"
+    "vscode": "^1.136.0"
   },
   "categories": [
     "Formatters"
@@ -102,8 +102,8 @@
     "LICENSE"
   ],
   "devDependencies": {
-    "@types/node": "26.2.0",
-    "@types/vscode": "^1.125.0",
+    "@types/node": "26.5.0",
+    "@types/vscode": "^1.136.0",
     "typescript": "7.0.2"
   }
 }

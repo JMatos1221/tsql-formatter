@@ -1,9 +1,19 @@
 import type * as vscode from 'vscode';
+import {
+  KEYWORDS,
+  FUNCTIONS,
+  TYPES_WITH_PARAMS,
+  WITH_OPTION_KEYWORDS,
+  STATEMENT_START_KEYWORDS,
+  CREATE_DROP_OBJECT_KEYWORDS,
+  CLAUSE_KEYWORDS,
+  JOIN_START_KEYWORDS,
+} from './keywords';
+import { Token, makeToken, tokenize, mergeMultiWordKeywords } from './tokenizer';
+import { TsqlFormattingProvider, getOutputChannel } from './provider';
 
-declare const require: any;
-
-type CaseOption = 'upper' | 'lower' | 'preserve';
-type KeywordCaseOption = 'upper' | 'lower' | 'preserve';
+export type CaseOption = 'upper' | 'lower' | 'preserve';
+export type KeywordCaseOption = 'upper' | 'lower' | 'preserve';
 
 export interface FormatterOptions {
   breakOnKeywords: boolean;
@@ -15,1146 +25,15 @@ export interface FormatterOptions {
   useMaxLineLength: boolean;
 }
 
-// --- Token definition ---
-interface Token {
-  type:
-    | 'word'
-    | 'string'
-    | 'number'
-    | 'operator'
-    | 'comma'
-    | 'oparen'
-    | 'cparen'
-    | 'dot'
-    | 'semicolon'
-    | 'star'
-    | 'comment';
-  value: string;
-  // Precomputed upper-case value for 'word' tokens (empty string otherwise).
-  // Every keyword/statement-boundary check in the hot parsing loop needs the
-  // upper-cased form, often several times per token; computing it once here
-  // avoids repeated toUpperCase() calls on the same string.
-  upper: string;
-  hasPrecedingNewline: boolean;
-}
-
-function makeToken(type: Token['type'], value: string, hasPrecedingNewline = false): Token {
-  return {
-    type,
-    value,
-    upper: type === 'word' ? value.toUpperCase() : '',
-    hasPrecedingNewline,
-  };
-}
-
-// --- Keyword and function sets ---
-const KEYWORDS = new Set([
-  // DML
-  'SELECT',
-  'INSERT',
-  'UPDATE',
-  'DELETE',
-  'MERGE',
-  'FROM',
-  'WHERE',
-  'SET',
-  'VALUES',
-  'INTO',
-  // Joins
-  'JOIN',
-  'INNER',
-  'LEFT',
-  'RIGHT',
-  'FULL',
-  'OUTER',
-  'CROSS',
-  'ON',
-  'APPLY',
-  // Clauses
-  'GROUP',
-  'BY',
-  'ORDER',
-  'HAVING',
-  'TOP',
-  'DISTINCT',
-  'UNION',
-  'ALL',
-  'EXCEPT',
-  'INTERSECT',
-  // Expressions
-  'AS',
-  'CASE',
-  'WHEN',
-  'THEN',
-  'ELSE',
-  'END',
-  'AND',
-  'OR',
-  'NOT',
-  'IN',
-  'IS',
-  'NULL',
-  'LIKE',
-  'BETWEEN',
-  'EXISTS',
-  'ASC',
-  'DESC',
-  // Window functions
-  'OVER',
-  'PARTITION',
-  'ROWS',
-  'RANGE',
-  'UNBOUNDED',
-  'PRECEDING',
-  'FOLLOWING',
-  'CURRENT',
-  'ROW',
-  // DDL
-  'CREATE',
-  'ALTER',
-  'DROP',
-  'TABLE',
-  'VIEW',
-  'INDEX',
-  'PROCEDURE',
-  'FUNCTION',
-  'TRIGGER',
-  'SCHEMA',
-  'DATABASE',
-  'PRIMARY',
-  'KEY',
-  'IDENTITY',
-  'UNIQUE',
-  'CLUSTERED',
-  'NONCLUSTERED',
-  'CONSTRAINT',
-  'DEFAULT',
-  'CHECK',
-  'FOREIGN',
-  'REFERENCES',
-  'CASCADE',
-  'ADD',
-  'COLUMN',
-  'TYPE',
-  'SYNONYM',
-  'SEQUENCE',
-  'INCLUDE',
-  'FILLFACTOR',
-  'STATISTICS',
-  // Data types
-  'INT',
-  'BIGINT',
-  'SMALLINT',
-  'TINYINT',
-  'BIT',
-  'DECIMAL',
-  'NUMERIC',
-  'FLOAT',
-  'REAL',
-  'MONEY',
-  'SMALLMONEY',
-  'CHAR',
-  'VARCHAR',
-  'NCHAR',
-  'NVARCHAR',
-  'TEXT',
-  'NTEXT',
-  'DATE',
-  'DATETIME',
-  'DATETIME2',
-  'SMALLDATETIME',
-  'TIME',
-  'DATETIMEOFFSET',
-  'BINARY',
-  'VARBINARY',
-  'IMAGE',
-  'UNIQUEIDENTIFIER',
-  'XML',
-  'SQL_VARIANT',
-  'TIMESTAMP',
-  'ROWVERSION',
-  'MAX',
-  'HIERARCHYID',
-  'GEOMETRY',
-  'GEOGRAPHY',
-  'SYSNAME',
-  // Control flow
-  'IF',
-  'BEGIN',
-  'END',
-  'WHILE',
-  'BREAK',
-  'CONTINUE',
-  'RETURN',
-  'GOTO',
-  'WAITFOR',
-  'TRY',
-  'CATCH',
-  'THROW',
-  'RAISERROR',
-  // Transaction
-  'COMMIT',
-  'ROLLBACK',
-  'TRAN',
-  'TRANSACTION',
-  'SAVE',
-  // Cursor
-  'CURSOR',
-  'OPEN',
-  'CLOSE',
-  'FETCH',
-  'DEALLOCATE',
-  'NEXT',
-  'PRIOR',
-  'FIRST',
-  'LAST',
-  'ABSOLUTE',
-  'RELATIVE',
-  'SCROLL',
-  'INSENSITIVE',
-  'FAST_FORWARD',
-  'READ_ONLY',
-  'FORWARD_ONLY',
-  'STATIC',
-  'DYNAMIC',
-  'KEYSET',
-  'SCROLL_LOCKS',
-  'OPTIMISTIC',
-  'LOCAL',
-  'GLOBAL',
-  // Paging
-  'OFFSET',
-  'PERCENT',
-  'TIES',
-  // Query hints
-  'OPTION',
-  'RECOMPILE',
-  'MAXRECURSION',
-  'MAXDOP',
-  'OPTIMIZE',
-  'FOR',
-  'FORCE',
-  // Join hints
-  'LOOP',
-  'HASH',
-  'REMOTE',
-  // SET options
-  'NOCOUNT',
-  'XACT_ABORT',
-  'ANSI_NULLS',
-  'QUOTED_IDENTIFIER',
-  'CONCAT_NULL_YIELDS_NULL',
-  'ARITHABORT',
-  'ANSI_PADDING',
-  'ANSI_WARNINGS',
-  'ROWCOUNT',
-  // Full-text search
-  'CONTAINS',
-  'FREETEXT',
-  'CONTAINSTABLE',
-  'FREETEXTTABLE',
-  // MERGE
-  'MATCHED',
-  'TARGET',
-  'SOURCE',
-  // Other
-  'DECLARE',
-  'PRINT',
-  'EXEC',
-  'EXECUTE',
-  'WITH',
-  'NOLOCK',
-  'HOLDLOCK',
-  'UPDLOCK',
-  'ROWLOCK',
-  'TABLOCK',
-  'PAGLOCK',
-  'XLOCK',
-  'READCOMMITTED',
-  'READUNCOMMITTED',
-  'READPAST',
-  'SERIALIZABLE',
-  'SNAPSHOT',
-  'NOWAIT',
-  'NOEXPAND',
-  'GO',
-  'USE',
-  'GRANT',
-  'REVOKE',
-  'DENY',
-  'TRUNCATE',
-  'OUTPUT',
-  'INSERTED',
-  'DELETED',
-  'SOME',
-  'ANY',
-  'PIVOT',
-  'UNPIVOT',
-  'TABLESAMPLE',
-  'OPENXML',
-  'OPENQUERY',
-  'OPENROWSET',
-  'OPENDATASOURCE',
-  'COLLATE',
-  'ESCAPE',
-  'BACKUP',
-  'RESTORE',
-  'DBCC',
-  'ENABLE',
-  'DISABLE',
-  'BULK',
-  'DELAY',
-  // Pagination (OFFSET ... FETCH NEXT/FIRST ... ROWS ONLY)
-  'FIRST',
-  'ONLY',
-  // GROUP BY extensions
-  'ROLLUP',
-  'CUBE',
-  'GROUPING',
-  'SETS',
-  // Ordered-set / analytic functions
-  'WITHIN',
-  // Sequences
-  'VALUE',
-  // FOR XML / FOR JSON
-  'XML',
-  'JSON',
-  'AUTO',
-  'RAW',
-  'EXPLICIT',
-  'ROOT',
-  'ELEMENTS',
-  'XSINIL',
-  'BINARY_BASE64',
-  'WITHOUT_ARRAY_WRAPPER',
-  'INCLUDE_NULL_VALUES',
-  // Column definition modifiers
-  'PERSISTED',
-  'SPARSE',
-  'FILESTREAM',
-  'ROWGUIDCOL',
-  'MASKED',
-  'ENCRYPTED',
-  // WITH options for views/procedures/functions
-  'SCHEMABINDING',
-  'ENCRYPTION',
-  // EXECUTE AS context
-  'CALLER',
-  'SELF',
-  'OWNER',
-  // Table hints (additional)
-  'TABLOCKX',
-  'READCOMMITTEDLOCK',
-  'REPEATABLEREAD',
-  // SET IDENTITY_INSERT
-  'IDENTITY_INSERT',
-  // Multi-word keywords (merged tokens)
-  'GROUP BY',
-  'ORDER BY',
-  'PARTITION BY',
-  'INNER JOIN',
-  'LEFT JOIN',
-  'RIGHT JOIN',
-  'FULL JOIN',
-  'CROSS JOIN',
-  'LEFT OUTER JOIN',
-  'RIGHT OUTER JOIN',
-  'FULL OUTER JOIN',
-  'CROSS APPLY',
-  'OUTER APPLY',
-  'UNION ALL',
-  'EXCEPT ALL',
-  'INTERSECT ALL',
-  'INSERT INTO',
-  'DELETE FROM',
-  'BEGIN TRY',
-  'BEGIN CATCH',
-  'BEGIN TRAN',
-  'BEGIN TRANSACTION',
-  'END TRY',
-  'END CATCH',
-  'PRIMARY KEY',
-  'FOREIGN KEY',
-  'IS NULL',
-  'IS NOT NULL',
-  'NOT NULL',
-  'NOT IN',
-  'NOT LIKE',
-  'NOT BETWEEN',
-  'NOT EXISTS',
-  'GROUPING SETS',
-  'WITH ROLLUP',
-  'WITH CUBE',
-  'WITHIN GROUP',
-  'NEXT VALUE FOR',
-  'EXECUTE AS',
-  'FOR XML',
-  'FOR JSON',
-  // Modern / Additional Keywords
-  'GROUPS',
-  'INTEGER',
-  'DEC',
-  'WORK',
-  'CHECKPOINT',
-  'FORCESCAN',
-  'FORCESEEK',
-  'NATIVE_COMPILATION',
-  'VIEW_METADATA',
-  'NUMERIC_ROUNDABORT',
-  'DATEFIRST',
-  'DATEFORMAT',
-  'LANGUAGE',
-  'LOCK_TIMEOUT',
-  'DEADLOCK_PRIORITY',
-  'CREATE OR ALTER',
-  'DROP TABLE IF EXISTS',
-  'DROP PROCEDURE IF EXISTS',
-  'DROP FUNCTION IF EXISTS',
-  'DROP VIEW IF EXISTS',
-  'DROP TRIGGER IF EXISTS',
-  'DROP SCHEMA IF EXISTS',
-  'DROP DATABASE IF EXISTS',
-  'DROP TYPE IF EXISTS',
-  'DROP SEQUENCE IF EXISTS',
-  'DROP SYNONYM IF EXISTS',
-  'DROP INDEX IF EXISTS',
-  'IF EXISTS',
-  'IF NOT EXISTS',
-  'AT TIME ZONE',
-  'ADD CONSTRAINT',
-  'DROP CONSTRAINT',
-  'SET NOCOUNT',
-  'COMMIT TRAN',
-  'COMMIT TRANSACTION',
-  'COMMIT WORK',
-  'ROLLBACK TRAN',
-  'ROLLBACK TRANSACTION',
-  'ROLLBACK WORK',
-  'SAVE TRAN',
-  'SAVE TRANSACTION',
-  'REVERT',
-  'VECTOR',
-  'BULK',
-  'SYSTEM_TIME',
-  'SHORTEST_PATH',
-  'MATCH',
-  'CONTAINED',
-  'NO',
-  'ACTION',
-  'ROLE',
-  'LOGIN',
-  'USER',
-  'PERMISSIONS',
-  'FOR SYSTEM_TIME',
-  'BULK INSERT',
-  'NO ACTION',
-  'SET NULL',
-  'SET DEFAULT',
-  'AS OF',
-  'CONTAINED IN',
-]);
-
-const FUNCTIONS = new Set([
-  // Aggregate
-  'COUNT',
-  'SUM',
-  'AVG',
-  'MIN',
-  'MAX',
-  'COUNT_BIG',
-  'GROUPING',
-  'GROUPING_ID',
-  'CHECKSUM_AGG',
-  'STDEV',
-  'STDEVP',
-  'VAR',
-  'VARP',
-  // Ranking/Window
-  'ROW_NUMBER',
-  'RANK',
-  'DENSE_RANK',
-  'NTILE',
-  'LAG',
-  'LEAD',
-  'FIRST_VALUE',
-  'LAST_VALUE',
-  // String
-  'LEN',
-  'DATALENGTH',
-  'SUBSTRING',
-  'CHARINDEX',
-  'PATINDEX',
-  'REPLACE',
-  'STUFF',
-  'REPLICATE',
-  'REVERSE',
-  'SPACE',
-  'LTRIM',
-  'RTRIM',
-  'TRIM',
-  'UPPER',
-  'LOWER',
-  'CONCAT',
-  'CONCAT_WS',
-  'STRING_AGG',
-  'STRING_SPLIT',
-  'FORMAT',
-  'ASCII',
-  'UNICODE',
-  'QUOTENAME',
-  // Date
-  'GETDATE',
-  'GETUTCDATE',
-  'SYSDATETIME',
-  'SYSUTCDATETIME',
-  'SYSDATETIMEOFFSET',
-  'DATEADD',
-  'DATEDIFF',
-  'DATEDIFF_BIG',
-  'DATENAME',
-  'DATEPART',
-  'DATETRUNC',
-  'YEAR',
-  'MONTH',
-  'DAY',
-  'EOMONTH',
-  'ISDATE',
-  'SWITCHOFFSET',
-  'TODATETIMEOFFSET',
-  // Conversion
-  'CAST',
-  'CONVERT',
-  'TRY_CAST',
-  'TRY_CONVERT',
-  'PARSE',
-  'TRY_PARSE',
-  // Math
-  'ABS',
-  'CEILING',
-  'FLOOR',
-  'ROUND',
-  'POWER',
-  'SQRT',
-  'SIGN',
-  'LOG',
-  'LOG10',
-  'EXP',
-  'PI',
-  'RAND',
-  'SQUARE',
-  'SIN',
-  'COS',
-  'TAN',
-  'ASIN',
-  'ACOS',
-  'ATAN',
-  'ATN2',
-  // Logical
-  'IIF',
-  'CHOOSE',
-  'COALESCE',
-  'NULLIF',
-  // System
-  'NEWID',
-  'NEWSEQUENTIALID',
-  'SCOPE_IDENTITY',
-  'IDENT_CURRENT',
-  'OBJECT_ID',
-  'OBJECT_NAME',
-  'DB_ID',
-  'DB_NAME',
-  'SCHEMA_ID',
-  'SCHEMA_NAME',
-  'TYPE_ID',
-  'TYPE_NAME',
-  'COL_NAME',
-  'COL_LENGTH',
-  'COLUMNPROPERTY',
-  'OBJECTPROPERTY',
-  'DATABASEPROPERTYEX',
-  'SERVERPROPERTY',
-  'ERROR_NUMBER',
-  'ERROR_MESSAGE',
-  'ERROR_SEVERITY',
-  'ERROR_STATE',
-  'ERROR_PROCEDURE',
-  'ERROR_LINE',
-  'APP_NAME',
-  'HOST_NAME',
-  'SUSER_NAME',
-  'SUSER_SNAME',
-  'SUSER_ID',
-  'SUSER_SID',
-  'USER_NAME',
-  'USER_ID',
-  // JSON
-  'JSON_VALUE',
-  'JSON_QUERY',
-  'JSON_MODIFY',
-  'ISJSON',
-  'JSON_OBJECT',
-  'JSON_ARRAY',
-  'OPENJSON',
-  // Analytics
-  'PERCENTILE_CONT',
-  'PERCENTILE_DISC',
-  'CUME_DIST',
-  'PERCENT_RANK',
-  // String (additional)
-  'STRING_ESCAPE',
-  'TRANSLATE',
-  'LEFT',
-  'RIGHT',
-  'CHAR',
-  'NCHAR',
-  // Metadata
-  'OBJECT_DEFINITION',
-  'INDEX_COL',
-  'INDEXPROPERTY',
-  'FILE_ID',
-  'FILE_NAME',
-  'FILEGROUP_ID',
-  'FILEGROUP_NAME',
-  // Aggregate (additional)
-  'APPROX_COUNT_DISTINCT',
-  // Other
-  'ISNULL',
-  'ISNUMERIC',
-  'HASHBYTES',
-  'CHECKSUM',
-  'BINARY_CHECKSUM',
-  'COMPRESS',
-  'DECOMPRESS',
-  'GREATEST',
-  'LEAST',
-  // Date construction
-  'DATEFROMPARTS',
-  'DATETIME2FROMPARTS',
-  'DATETIMEFROMPARTS',
-  'DATETIMEOFFSETFROMPARTS',
-  'SMALLDATETIMEFROMPARTS',
-  'TIMEFROMPARTS',
-  // String (additional)
-  'PARSENAME',
-  'SOUNDEX',
-  'DIFFERENCE',
-  'STR',
-  'FORMATMESSAGE',
-  // Niladic system functions
-  'CURRENT_TIMESTAMP',
-  'CURRENT_USER',
-  'SESSION_USER',
-  'SYSTEM_USER',
-  'CURRENT_TIMEZONE',
-  'CURRENT_TIMEZONE_ID',
-  // Metadata (additional)
-  'OBJECTPROPERTYEX',
-  // AI / Vector functions (SQL Server 2025)
-  'VECTOR_DISTANCE',
-]);
-
-// Data types that take a size/precision parameter in parentheses
-const TYPES_WITH_PARAMS = new Set([
-  'VARCHAR',
-  'NVARCHAR',
-  'CHAR',
-  'NCHAR',
-  'DECIMAL',
-  'NUMERIC',
-  'FLOAT',
-  'VARBINARY',
-  'BINARY',
-  'DATETIME2',
-  'DATETIMEOFFSET',
-  'TIME',
-  'VECTOR',
-]);
-
-// Multi-word keywords: longest patterns first for greedy matching
-const MULTI_WORD_KEYWORDS: string[][] = [
-  // 4-word
-  ['DROP', 'TABLE', 'IF', 'EXISTS'],
-  ['DROP', 'PROCEDURE', 'IF', 'EXISTS'],
-  ['DROP', 'FUNCTION', 'IF', 'EXISTS'],
-  ['DROP', 'VIEW', 'IF', 'EXISTS'],
-  ['DROP', 'TRIGGER', 'IF', 'EXISTS'],
-  ['DROP', 'SCHEMA', 'IF', 'EXISTS'],
-  ['DROP', 'DATABASE', 'IF', 'EXISTS'],
-  ['DROP', 'TYPE', 'IF', 'EXISTS'],
-  ['DROP', 'SEQUENCE', 'IF', 'EXISTS'],
-  ['DROP', 'SYNONYM', 'IF', 'EXISTS'],
-  ['DROP', 'INDEX', 'IF', 'EXISTS'],
-  ['WITH', 'GRANT', 'OPTION'],
-  // 3-word
-  ['CREATE', 'OR', 'ALTER'],
-  ['AT', 'TIME', 'ZONE'],
-  ['IS', 'NOT', 'NULL'],
-  ['LEFT', 'OUTER', 'JOIN'],
-  ['RIGHT', 'OUTER', 'JOIN'],
-  ['FULL', 'OUTER', 'JOIN'],
-  ['NEXT', 'VALUE', 'FOR'],
-  ['FOR', 'SYSTEM_TIME'],
-  ['CONTAINED', 'IN'],
-  ['AS', 'OF'],
-  // 2-word
-  ['GROUP', 'BY'],
-  ['ORDER', 'BY'],
-  ['PARTITION', 'BY'],
-  ['INNER', 'JOIN'],
-  ['LEFT', 'JOIN'],
-  ['RIGHT', 'JOIN'],
-  ['FULL', 'JOIN'],
-  ['CROSS', 'JOIN'],
-  ['CROSS', 'APPLY'],
-  ['OUTER', 'APPLY'],
-  ['UNION', 'ALL'],
-  ['EXCEPT', 'ALL'],
-  ['INTERSECT', 'ALL'],
-  ['INSERT', 'INTO'],
-  ['DELETE', 'FROM'],
-  ['BEGIN', 'TRY'],
-  ['BEGIN', 'CATCH'],
-  ['BEGIN', 'TRAN'],
-  ['BEGIN', 'TRANSACTION'],
-  ['END', 'TRY'],
-  ['END', 'CATCH'],
-  ['PRIMARY', 'KEY'],
-  ['FOREIGN', 'KEY'],
-  ['IS', 'NULL'],
-  ['NOT', 'NULL'],
-  ['NOT', 'IN'],
-  ['NOT', 'LIKE'],
-  ['NOT', 'BETWEEN'],
-  ['NOT', 'EXISTS'],
-  ['GROUPING', 'SETS'],
-  ['WITH', 'ROLLUP'],
-  ['WITH', 'CUBE'],
-  ['WITHIN', 'GROUP'],
-  ['EXECUTE', 'AS'],
-  ['FOR', 'XML'],
-  ['FOR', 'JSON'],
-  ['IF', 'EXISTS'],
-  ['IF', 'NOT'],
-  ['ADD', 'CONSTRAINT'],
-  ['DROP', 'CONSTRAINT'],
-  ['SET', 'NOCOUNT'],
-  ['SET', 'IDENTITY_INSERT'],
-  ['FETCH', 'NEXT'],
-  ['FETCH', 'FIRST'],
-  ['ROWS', 'ONLY'],
-  ['ROW', 'ONLY'],
-  ['BULK', 'INSERT'],
-  ['NO', 'ACTION'],
-  ['SET', 'NULL'],
-  ['SET', 'DEFAULT'],
-];
-
-// Words that can immediately follow WITH as a procedure/function/view
-// options clause rather than a CTE name (e.g. "WITH EXECUTE AS CALLER",
-// "WITH SCHEMABINDING", "WITH CHECK OPTION"). A following "(" (table hints,
-// or a parenthesized CTE column list) is handled separately by callers that
-// already know which construct they're in.
-const WITH_OPTION_KEYWORDS = new Set([
-  'EXECUTE AS',
-  'SCHEMABINDING',
-  'ENCRYPTION',
-  'RECOMPILE',
-  'CHECK',
-  'NATIVE_COMPILATION',
-  'VIEW_METADATA',
-]);
-
-// Sets backing the parser's boundary checks. These are consulted on every
-// token position while parsing (isStatementStart/isClauseKeyword/isJoinStart
-// run far more often than any keyword lookup done during formatting), so a
-// Set.has() lookup replaces what was previously a linear Array.includes()
-// scan for each one.
-const STATEMENT_START_KEYWORDS = new Set([
-  'DECLARE',
-  'INSERT',
-  'INSERT INTO',
-  'UPDATE',
-  'DELETE',
-  'DELETE FROM',
-  'SELECT',
-  'MERGE',
-  'IF',
-  'WHILE',
-  'RETURN',
-  'COMMIT',
-  'ROLLBACK',
-  'THROW',
-  'PRINT',
-  'EXEC',
-  'EXECUTE',
-  'TRUNCATE',
-  'USE',
-  'GO',
-  'GRANT',
-  'REVOKE',
-  'DENY',
-  'ALTER',
-  'SET',
-  'OPEN',
-  'CLOSE',
-  'FETCH',
-  'DEALLOCATE',
-  'RAISERROR',
-  'BACKUP',
-  'RESTORE',
-  'DBCC',
-  'BEGIN TRY',
-  'BEGIN CATCH',
-  'BEGIN TRAN',
-  'BEGIN TRANSACTION',
-  'CREATE OR ALTER',
-  'DROP TABLE IF EXISTS',
-  'DROP PROCEDURE IF EXISTS',
-  'DROP FUNCTION IF EXISTS',
-  'DROP VIEW IF EXISTS',
-  'DROP TRIGGER IF EXISTS',
-  'DROP SCHEMA IF EXISTS',
-  'DROP DATABASE IF EXISTS',
-  'DROP TYPE IF EXISTS',
-  'DROP SEQUENCE IF EXISTS',
-  'DROP SYNONYM IF EXISTS',
-  'DROP INDEX IF EXISTS',
-  'SAVE',
-  'SAVE TRAN',
-  'SAVE TRANSACTION',
-  'CHECKPOINT',
-  'BULK INSERT',
-  'REVERT',
-]);
-
-// Object keywords that can follow CREATE or DROP to start a DDL statement.
-const CREATE_DROP_OBJECT_KEYWORDS = new Set([
-  'TABLE',
-  'VIEW',
-  'PROCEDURE',
-  'FUNCTION',
-  'INDEX',
-  'SCHEMA',
-  'DATABASE',
-  'TRIGGER',
-  'TYPE',
-  'SYNONYM',
-  'SEQUENCE',
-]);
-
-const CLAUSE_KEYWORDS = new Set([
-  'FROM',
-  'WHERE',
-  'SET',
-  'VALUES',
-  'HAVING',
-  'GROUP BY',
-  'ORDER BY',
-  'UNION',
-  'UNION ALL',
-  'EXCEPT',
-  'EXCEPT ALL',
-  'INTERSECT',
-  'INTERSECT ALL',
-  'OUTPUT',
-  'OFFSET',
-  'FOR XML',
-  'FOR JSON',
-]);
-
-const JOIN_START_KEYWORDS = new Set([
-  'JOIN',
-  'INNER JOIN',
-  'LEFT JOIN',
-  'RIGHT JOIN',
-  'FULL JOIN',
-  'CROSS JOIN',
-  'LEFT OUTER JOIN',
-  'RIGHT OUTER JOIN',
-  'FULL OUTER JOIN',
-  'CROSS APPLY',
-  'OUTER APPLY',
-]);
-
-// Character classification by char code, avoiding a fresh regex test (and its
-// match-object bookkeeping) on every single character of the document - the
-// tokenizer's inner loop runs once per input character, so this adds up on
-// large files.
-function isWhitespaceCode(c: number): boolean {
-  return c === 32 || (c >= 9 && c <= 13); // space, \t \n \v \f \r
-}
-function isDigitCode(c: number): boolean {
-  return c >= 48 && c <= 57; // 0-9
-}
-function isWordStartCode(c: number): boolean {
-  return (
-    (c >= 65 && c <= 90) || // A-Z
-    (c >= 97 && c <= 122) || // a-z
-    c === 95 || // _
-    c === 64 || // @
-    c === 35 // #
-  );
-}
-function isWordCharCode(c: number): boolean {
-  return (
-    (c >= 65 && c <= 90) || (c >= 97 && c <= 122) || (c >= 48 && c <= 57) || c === 95 // _
-  );
-}
-
-// --- Tokenizer ---
-function tokenize(input: string): Token[] {
-  const tokens: Token[] = [];
-  const len = input.length;
-  let i = 0;
-  let hasNewline = true;
-
-  const push = (type: Token['type'], value: string) => {
-    tokens.push(makeToken(type, value, hasNewline));
-    hasNewline = false;
-  };
-
-  while (i < len) {
-    const code = input.charCodeAt(i);
-
-    // Skip whitespace
-    if (isWhitespaceCode(code)) {
-      if (input[i] === '\n' || input[i] === '\r') {
-        hasNewline = true;
-      }
-      i++;
-      continue;
-    }
-
-    // N-prefixed string literal (N'...')
-    if ((input[i] === 'N' || input[i] === 'n') && input[i + 1] === "'") {
-      let end = i + 2;
-      while (end < len) {
-        if (input[end] === "'" && input[end + 1] === "'") {
-          end += 2;
-        } else if (input[end] === "'") {
-          end++;
-          break;
-        } else {
-          end++;
-        }
-      }
-      push('string', input.slice(i, end));
-      i = end;
-      continue;
-    }
-
-    // String literal
-    if (input[i] === "'") {
-      let end = i + 1;
-      while (end < len) {
-        if (input[end] === "'" && input[end + 1] === "'") {
-          end += 2;
-        } else if (input[end] === "'") {
-          end++;
-          break;
-        } else {
-          end++;
-        }
-      }
-      push('string', input.slice(i, end));
-      i = end;
-      continue;
-    }
-
-    // Single-line comment
-    if (input[i] === '-' && input[i + 1] === '-') {
-      let end = i + 2;
-      while (end < len && input[end] !== '\n') end++;
-      push('comment', input.slice(i, end).trim());
-      i = end;
-      continue;
-    }
-
-    // Block comment
-    if (input[i] === '/' && input[i + 1] === '*') {
-      let end = i + 2;
-      while (end < len && !(input[end] === '*' && input[end + 1] === '/')) end++;
-      if (end < len) end += 2; // skip past closing */; if unclosed, end stays at input.length
-      push('comment', input.slice(i, end));
-      i = end;
-      continue;
-    }
-
-    // Bracketed identifier [...]
-    if (input[i] === '[') {
-      let end = i + 1;
-      while (end < len && input[end] !== ']') end++;
-      if (end < len) end++; // include closing ]
-      push('word', input.slice(i, end));
-      i = end;
-      continue;
-    }
-
-    // Double-quoted identifier "..."
-    if (input[i] === '"') {
-      let end = i + 1;
-      while (end < len && input[end] !== '"') end++;
-      if (end < len) end++; // include closing "
-      push('word', input.slice(i, end));
-      i = end;
-      continue;
-    }
-
-    // Word (identifier, keyword, variable, system variable)
-    if (isWordStartCode(code)) {
-      let end = i;
-      if (input[i] === '@' && input[i + 1] === '@') end = i + 2;
-      else if (input[i] === '#' && input[i + 1] === '#') end = i + 2;
-      else if (input[i] === '@' || input[i] === '#') end = i + 1;
-
-      while (end < len && isWordCharCode(input.charCodeAt(end))) end++;
-      push('word', input.slice(i, end));
-      i = end;
-      continue;
-    }
-
-    // Number
-    if (isDigitCode(code)) {
-      let end = i;
-      while (end < len && (isDigitCode(input.charCodeAt(end)) || input[end] === '.')) end++;
-      push('number', input.slice(i, end));
-      i = end;
-      continue;
-    }
-
-    // Punctuation and operators
-    if (input[i] === '(') {
-      push('oparen', '(');
-      i++;
-      continue;
-    }
-    if (input[i] === ')') {
-      push('cparen', ')');
-      i++;
-      continue;
-    }
-    if (input[i] === ',') {
-      push('comma', ',');
-      i++;
-      continue;
-    }
-    if (input[i] === '.') {
-      push('dot', '.');
-      i++;
-      continue;
-    }
-    if (input[i] === ';') {
-      push('semicolon', ';');
-      i++;
-      continue;
-    }
-    if (input[i] === '*') {
-      push('star', '*');
-      i++;
-      continue;
-    }
-
-    // Multi-char operators
-    if (input[i] === '<' && input[i + 1] === '>') {
-      push('operator', '<>');
-      i += 2;
-      continue;
-    }
-    if (input[i] === '!' && input[i + 1] === '=') {
-      push('operator', '!=');
-      i += 2;
-      continue;
-    }
-    if (input[i] === '>' && input[i + 1] === '=') {
-      push('operator', '>=');
-      i += 2;
-      continue;
-    }
-    if (input[i] === '<' && input[i + 1] === '=') {
-      push('operator', '<=');
-      i += 2;
-      continue;
-    }
-
-    // Single char operators
-    if ('=<>+-/%'.includes(input[i])) {
-      push('operator', input[i]);
-      i++;
-      continue;
-    }
-
-    // Anything else (e.g. brackets)
-    push('operator', input[i]);
-    i++;
-  }
-
-  return tokens;
-}
-
-// Candidate patterns grouped by their first word, so a token only needs to
-// try the handful of multi-word keywords that could plausibly start with it
-// instead of scanning the entire MULTI_WORD_KEYWORDS list. Insertion order
-// within each group is preserved (longest-pattern-first, per the source
-// array), which keeps the existing greedy-match precedence intact.
-const MULTI_WORD_BY_FIRST_WORD: Map<string, string[][]> = new Map();
-for (const pattern of MULTI_WORD_KEYWORDS) {
-  const key = pattern[0];
-  const group = MULTI_WORD_BY_FIRST_WORD.get(key);
-  if (group) group.push(pattern);
-  else MULTI_WORD_BY_FIRST_WORD.set(key, [pattern]);
-}
-
-// Merge consecutive word tokens that form multi-word keywords
-function mergeMultiWordKeywords(tokens: Token[]): Token[] {
-  const result: Token[] = [];
-  const len = tokens.length;
-  let i = 0;
-
-  while (i < len) {
-    const tok = tokens[i];
-    if (tok.type === 'word') {
-      const candidates = MULTI_WORD_BY_FIRST_WORD.get(tok.upper);
-      let matched = false;
-      if (candidates) {
-        for (const pattern of candidates) {
-          if (i + pattern.length > len) continue;
-          let allMatch = true;
-          for (let j = 1; j < pattern.length; j++) {
-            const t = tokens[i + j];
-            if (t.type !== 'word' || t.upper !== pattern[j]) {
-              allMatch = false;
-              break;
-            }
-          }
-          if (allMatch) {
-            const value = tokens
-              .slice(i, i + pattern.length)
-              .map((t) => t.value)
-              .join(' ');
-            result.push({
-              type: 'word',
-              value,
-              upper: pattern.join(' '),
-              hasPrecedingNewline: tok.hasPrecedingNewline,
-            });
-            i += pattern.length;
-            matched = true;
-            break;
-          }
-        }
-      }
-      if (!matched) {
-        result.push(tok);
-        i++;
-      }
-    } else {
-      result.push(tok);
-      i++;
-    }
-  }
-
-  return result;
-}
+// Re-exports for backwards compatibility
+export {
+  Token,
+  makeToken,
+  tokenize,
+  mergeMultiWordKeywords,
+  TsqlFormattingProvider,
+  getOutputChannel,
+};
 
 // --- Casing helpers ---
 function applyCase(value: string, option: string): string {
@@ -1164,34 +43,54 @@ function applyCase(value: string, option: string): string {
 }
 
 function isKeywordLike(token: Token): boolean {
-  if (token.value.startsWith('[') || token.value.startsWith('"')) return false;
-  return KEYWORDS.has(token.upper) || FUNCTIONS.has(token.upper) || token.value.startsWith('@@');
+  const v = token.value;
+  if (v.charCodeAt(0) === 91 || v.charCodeAt(0) === 34) return false; // [ or "
+  return (
+    KEYWORDS.has(token.upper) ||
+    FUNCTIONS.has(token.upper) ||
+    (v.charCodeAt(0) === 64 && v.charCodeAt(1) === 64) // @@
+  );
+}
+
+const NON_WRAPPING_TYPES = new Set(['comma', 'cparen', 'semicolon', 'dot']);
+const INDENT_SIZE = 4;
+
+function yieldToEventLoop(): Promise<void> {
+  return new Promise((resolve) => setImmediate(resolve));
 }
 
 // --- Formatter class ---
-const INDENT_SIZE = 4;
-
-class SqlFormatter {
+export class SqlFormatter {
   private tokens: Token[];
   private pos: number = 0;
   private lines: string[] = [];
   private currentLine: string = '';
-  // True once real content has been appended (via emit()) to currentLine
-  // since it was last reset to a fresh line. Lets finishLine() distinguish
-  // an untouched placeholder line (nothing to commit) from a deliberate
-  // blank line, so line-transition helpers can be called defensively
-  // without inventing extra blank lines.
   private currentLineTouched: boolean = false;
   private indent: number = 0;
   private options: FormatterOptions;
+  private cancellationToken?: { readonly isCancellationRequested: boolean };
 
-  constructor(tokens: Token[], options: FormatterOptions) {
+  constructor(
+    tokens: Token[],
+    options: FormatterOptions,
+    cancellationToken?: { readonly isCancellationRequested: boolean },
+  ) {
     this.tokens = tokens;
     this.options = options;
+    this.cancellationToken = cancellationToken;
   }
 
   format(): string {
     this.formatStatementList(false);
+    this.finishLine();
+    return this.lines.join('\n').trim() + '\n';
+  }
+
+  async formatAsync(): Promise<string> {
+    await this.formatStatementListAsync(false);
+    if (this.cancellationToken?.isCancellationRequested) {
+      return '';
+    }
     this.finishLine();
     return this.lines.join('\n').trim() + '\n';
   }
@@ -1214,9 +113,13 @@ class SqlFormatter {
     return t?.type === 'word' ? t.upper : '';
   }
 
-  private isWordAt(offset: number, ...expected: string[]): boolean {
+  private isWordAt(offset: number, w1: string, w2?: string, w3?: string, w4?: string): boolean {
     const u = this.upper(offset);
-    return expected.includes(u);
+    if (u === w1) return true;
+    if (w2 !== undefined && u === w2) return true;
+    if (w3 !== undefined && u === w3) return true;
+    if (w4 !== undefined && u === w4) return true;
+    return false;
   }
 
   private isType(offset: number, type: string): boolean {
@@ -1231,22 +134,11 @@ class SqlFormatter {
 
   private finishLine(): void {
     if (!this.currentLineTouched) {
-      // Nothing has been written to this line since it was last reset (e.g.
-      // a fresh placeholder line left ready for content that never arrived
-      // before another line-transition call). Treat as a no-op instead of
-      // inventing a blank line, so defensive newLine()/finishLine() calls
-      // that follow standalone comment handling don't add unwanted blanks.
       this.currentLine = '';
       return;
     }
-    // Preserve trailing spaces on content lines (used for continuation indicators)
-    // Only trim whitespace-only lines to empty strings
     const line = this.currentLine;
     const isBlank = line.trim() === '';
-    // Avoid committing a second consecutive blank line: this happens when a
-    // blank-line separator has just been inserted (e.g. after a block
-    // comment) and currentLine is still a blank/indent-only line by the
-    // time the next line transition commits it.
     if (isBlank && this.lines.length > 0 && this.lines[this.lines.length - 1] === '') {
       this.currentLine = '';
       this.currentLineTouched = false;
@@ -1263,10 +155,6 @@ class SqlFormatter {
     this.currentLineTouched = false;
   }
 
-  // Ensure at least `count` blank lines separate the previous content from
-  // whatever comes next. If a comment run already inserted a trailing blank
-  // line (e.g. after a block comment), this tops up to `count` rather than
-  // stacking `count` additional blanks on top of it.
   private blankLines(count: number): void {
     this.finishLine();
     let existingBlanks = 0;
@@ -1279,9 +167,6 @@ class SqlFormatter {
     for (let i = existingBlanks; i < count; i++) this.lines.push('');
   }
 
-  // Push a single blank separator line, avoiding a duplicate blank line if
-  // the previously emitted line is already blank (or nothing has been
-  // emitted yet, e.g. at the very start of the output).
   private pushBlankLineIfNeeded(): void {
     if (this.lines.length === 0) return;
     if (this.lines[this.lines.length - 1] === '') return;
@@ -1297,8 +182,8 @@ class SqlFormatter {
   private wrapBeforeTokenIfNeeded(token: Token, tokenText: string): void {
     if (!this.options.useMaxLineLength) return;
     if (this.options.maxLineLength <= 0) return;
-    if (this.currentLine.trim().length === 0) return;
-    if (['comma', 'cparen', 'semicolon', 'dot'].includes(token.type)) return;
+    if (!this.currentLineTouched) return;
+    if (NON_WRAPPING_TYPES.has(token.type)) return;
     if (this.currentLine.length + tokenText.length <= this.options.maxLineLength) return;
 
     if (this.currentLine.endsWith(' ')) {
@@ -1311,8 +196,7 @@ class SqlFormatter {
   // --- Casing ---
   private caseWord(token: Token): string {
     if (token.type !== 'word') return token.value;
-    // Preserve bracketed and double-quoted identifiers
-    if (token.value.startsWith('[') || token.value.startsWith('"')) return token.value;
+    if (token.value.charCodeAt(0) === 91 || token.value.charCodeAt(0) === 34) return token.value;
     if (isKeywordLike(token)) {
       return applyCase(token.value, this.options.keywordCase);
     }
@@ -1320,12 +204,10 @@ class SqlFormatter {
   }
 
   private applyIdentifierCasing(token: Token): string {
-    // Preserve bracketed and double-quoted identifiers
-    if (token.value.startsWith('[') || token.value.startsWith('"')) return token.value;
+    if (token.value.charCodeAt(0) === 91 || token.value.charCodeAt(0) === 34) return token.value;
     const opt = this.options.identifierCase;
     let value = token.value;
     if (opt === 'upper' || opt === 'lower') value = applyCase(value, opt);
-    // Variables (@var, @@sysvar) and temp tables (#temp, ##global) must never be bracketed
     if (this.options.useBrackets && !token.value.startsWith('@') && !token.value.startsWith('#')) {
       value = `[${value}]`;
     }
@@ -1333,17 +215,11 @@ class SqlFormatter {
   }
 
   // --- Comment emission ---
-
-  // Safely emit comment text, handling multi-line block comments by splitting
-  // on embedded newlines so that currentLine tracking stays correct.
   private emitCommentText(text: string): void {
     if (!text.includes('\n')) {
       this.emit(text);
       return;
     }
-    // Multi-line block comment: emit the first line onto currentLine, then
-    // push each subsequent line as a standalone line preserving the comment's
-    // own internal whitespace (e.g. leading " * " prefixes).
     const parts = text.split('\n');
     this.emit(parts[0].trimEnd());
     for (let i = 1; i < parts.length; i++) {
@@ -1353,25 +229,6 @@ class SqlFormatter {
     }
   }
 
-  // Emit a run of consecutive standalone comment tokens (comments that sit
-  // on their own line rather than trailing after code), applying the
-  // formatter's comment spacing rules:
-  //  - A blank line is inserted above the first comment of the run (unless
-  //    it's the very first thing in the output, or already preceded by a
-  //    blank line).
-  //  - Block comments (/* ... */) always get a blank line before and after
-  //    them, even in the middle of a run of comments.
-  //  - Consecutive single-line (--) comments are kept one per line with no
-  //    blank lines between them.
-  // Each comment's line is committed immediately (rather than left pending
-  // on currentLine), so a single-line comment - which always runs to the
-  // end of its line - can never be followed by more content on that same
-  // line. On exit, currentLine is a fresh `indent`-space line ready for
-  // whatever comes next.
-  // Note: the loop only ever consumes tokens of type 'comment', so it always
-  // stops at (and never absorbs) the first non-comment token - e.g. END /
-  // ELSE inside a BEGIN...END block - leaving callers' own block-boundary
-  // checks to fire immediately afterward exactly as before.
   private emitCommentRun(indent: number): void {
     let first = true;
     while (!this.atEnd() && this.peek()?.type === 'comment') {
@@ -1418,8 +275,15 @@ class SqlFormatter {
 
     // No space between function/type name and (
     if (token.type === 'oparen' && prev.type === 'word') {
-      const upper = prev.value.toUpperCase();
-      if (FUNCTIONS.has(upper) || TYPES_WITH_PARAMS.has(upper) || upper === 'OVER') return false;
+      const upper = prev.upper;
+      if (
+        FUNCTIONS.has(upper) ||
+        TYPES_WITH_PARAMS.has(upper) ||
+        upper === 'OVER' ||
+        upper.endsWith('PATH') ||
+        upper.endsWith('ROOT')
+      )
+        return false;
     }
 
     return true;
@@ -1433,18 +297,8 @@ class SqlFormatter {
 
   private isStatementStart(): boolean {
     const u = this.upper();
-
-    // A bare ELSE always closes the preceding single-statement IF/WHILE body
-    // (e.g. "IF x PRINT 'a' ELSE PRINT 'b'") - it never legitimately appears
-    // as part of an inline expression, so treat it like any other boundary.
     if (u === 'ELSE') return true;
-
-    // WITH is ambiguous: it starts a CTE ("WITH cte AS (...)") but is also a
-    // procedure/function/view options clause ("WITH EXECUTE AS CALLER",
-    // "WITH SCHEMABINDING", "WITH ENCRYPTION", "WITH CHECK OPTION"). Only
-    // treat it as a fresh statement when a real CTE could follow.
     if (u === 'WITH') return !WITH_OPTION_KEYWORDS.has(this.upper(1));
-
     if (STATEMENT_START_KEYWORDS.has(u)) return true;
     if (u === 'CREATE' && CREATE_DROP_OBJECT_KEYWORDS.has(this.upper(1))) return true;
     if (u === 'DROP' && CREATE_DROP_OBJECT_KEYWORDS.has(this.upper(1))) return true;
@@ -1453,13 +307,6 @@ class SqlFormatter {
     return false;
   }
 
-  // --- Generic inline statement bounded by its own terminator ---
-  // Used for statements whose bodies legitimately contain DML keywords as
-  // sub-clauses or literal names rather than as fresh statement starts:
-  // MERGE's "WHEN [NOT] MATCHED THEN UPDATE/INSERT/DELETE" actions, and
-  // GRANT/REVOKE/DENY permission lists like "SELECT, INSERT, UPDATE". Rather
-  // than guessing which bare keywords are safe, everything is written
-  // inline up to the statement's own semicolon (or GO, or end of input).
   private formatInlineStatementToTerminator(): void {
     if (this.atEnd()) return;
     this.emitToken(this.advance());
@@ -1469,11 +316,10 @@ class SqlFormatter {
       this.writeInlineUntil(atTerminator);
     }
     if (this.peek()?.type === 'semicolon') {
-      this.emit(this.advance().value); // ;
+      this.emit(this.advance().value);
     }
   }
 
-  // Is current position a clause keyword within a DML statement?
   private isClauseKeyword(): boolean {
     const u = this.upper();
     if (CLAUSE_KEYWORDS.has(u)) return true;
@@ -1491,28 +337,24 @@ class SqlFormatter {
     return u === 'AND' || u === 'OR';
   }
 
-  // Returns true when the current position is an opening paren that contains a subquery
   private isSubqueryStart(): boolean {
     if (this.peek()?.type !== 'oparen') return false;
-    // Skip any comment tokens immediately after ( to find the first meaningful token
     let offset = 1;
     while (this.peek(offset)?.type === 'comment') offset++;
     const inner = this.peek(offset);
     if (!inner || inner.type !== 'word') return false;
-    return inner.value.toUpperCase() === 'SELECT';
+    return inner.upper === 'SELECT';
   }
 
-  // --- Statement list formatter ---
+  // --- Statement list formatter (synchronous) ---
   private formatStatementList(insideBlock: boolean): void {
     let first = true;
     while (!this.atEnd()) {
-      // Check for block end
       if (insideBlock) {
         const u = this.upper();
         if (this.isEndKeyword() || u === 'ELSE') break;
       }
 
-      // Skip semicolons between statements
       while (this.peek()?.type === 'semicolon') this.advance();
       if (this.atEnd()) break;
       if (insideBlock && (this.isEndKeyword() || this.upper() === 'ELSE')) break;
@@ -1520,15 +362,10 @@ class SqlFormatter {
       const hasLeadingComments = this.peek()?.type === 'comment';
 
       if (first) {
-        // Flush any content the caller left on the current line
-        // (e.g., "BEGIN TRY" from formatBeginTryCatch)
         this.finishLine();
       } else if (!hasLeadingComments) {
-        // If the next statement is a GO batch separator, only break to a
-        // new line (no extra blank lines), since GO conceptually belongs
-        // directly after the previous batch as a confirmation token.
         const nextToken = this.peek();
-        const nextWord = nextToken?.type === 'word' ? nextToken.value.toUpperCase() : '';
+        const nextWord = nextToken?.type === 'word' ? nextToken.upper : '';
         if (nextWord === 'GO') {
           this.finishLine();
         } else {
@@ -1539,15 +376,68 @@ class SqlFormatter {
       this.currentLine = ' '.repeat(this.indent);
       this.currentLineTouched = false;
 
-      // Emit any comment lines that immediately precede the next statement,
-      // following the standard comment spacing rules (see emitCommentRun).
       this.emitCommentRun(this.indent);
       if (this.atEnd()) break;
       if (insideBlock && (this.isEndKeyword() || this.upper() === 'ELSE')) break;
 
-      // Safety net: formatStatement() must always advance past at least one
-      // token. If a future keyword combination slips through without making
-      // progress, force it here instead of looping forever on the same token.
+      const posBefore = this.pos;
+      this.formatStatement();
+      if (this.pos === posBefore && !this.atEnd()) {
+        this.emitToken(this.advance());
+      }
+      first = false;
+    }
+  }
+
+  // --- Statement list formatter (asynchronous, non-blocking) ---
+  private async formatStatementListAsync(insideBlock: boolean): Promise<void> {
+    let first = true;
+    let lastYieldTime = performance.now();
+
+    while (!this.atEnd()) {
+      if (this.cancellationToken?.isCancellationRequested) {
+        return;
+      }
+
+      // Cooperative yielding to event loop if more than 10ms have elapsed
+      if (performance.now() - lastYieldTime > 10) {
+        await yieldToEventLoop();
+        lastYieldTime = performance.now();
+        if (this.cancellationToken?.isCancellationRequested) {
+          return;
+        }
+      }
+
+      if (insideBlock) {
+        const u = this.upper();
+        if (this.isEndKeyword() || u === 'ELSE') break;
+      }
+
+      while (this.peek()?.type === 'semicolon') this.advance();
+      if (this.atEnd()) break;
+      if (insideBlock && (this.isEndKeyword() || this.upper() === 'ELSE')) break;
+
+      const hasLeadingComments = this.peek()?.type === 'comment';
+
+      if (first) {
+        this.finishLine();
+      } else if (!hasLeadingComments) {
+        const nextToken = this.peek();
+        const nextWord = nextToken?.type === 'word' ? nextToken.upper : '';
+        if (nextWord === 'GO') {
+          this.finishLine();
+        } else {
+          this.blankLines(this.options.linesBetweenQueries);
+        }
+      }
+      this.finishLine();
+      this.currentLine = ' '.repeat(this.indent);
+      this.currentLineTouched = false;
+
+      this.emitCommentRun(this.indent);
+      if (this.atEnd()) break;
+      if (insideBlock && (this.isEndKeyword() || this.upper() === 'ELSE')) break;
+
       const posBefore = this.pos;
       this.formatStatement();
       if (this.pos === posBefore && !this.atEnd()) {
@@ -1596,6 +486,12 @@ class SqlFormatter {
       case 'GRANT':
       case 'REVOKE':
       case 'DENY':
+      case 'KILL':
+      case 'RECONFIGURE':
+      case 'SHUTDOWN':
+      case 'SECURITYAUDIT':
+      case 'ENABLE TRIGGER':
+      case 'DISABLE TRIGGER':
         return this.formatInlineStatementToTerminator();
       case 'WITH':
         return this.formatWith();
@@ -1616,6 +512,12 @@ class SqlFormatter {
       case 'SAVE':
       case 'SAVE TRAN':
       case 'SAVE TRANSACTION':
+      case 'COMMIT TRAN':
+      case 'COMMIT TRANSACTION':
+      case 'COMMIT WORK':
+      case 'ROLLBACK TRAN':
+      case 'ROLLBACK TRANSACTION':
+      case 'ROLLBACK WORK':
         return this.formatTransactionCmd();
       case 'THROW':
       case 'RAISERROR':
@@ -1629,6 +531,7 @@ class SqlFormatter {
       case 'SET':
         return this.formatSetStatement();
       case 'TRUNCATE':
+      case 'TRUNCATE TABLE':
       case 'CHECKPOINT':
         return this.formatGenericLine();
       case 'USE':
@@ -1647,7 +550,6 @@ class SqlFormatter {
       case 'END':
       case 'END TRY':
       case 'END CATCH':
-        // Orphan END at top level (outside a block) - emit and move on
         this.emitToken(this.advance());
         return;
       default:
@@ -1720,16 +622,13 @@ class SqlFormatter {
     this.emitToken(this.advance()); // TABLE
     this.emit(' ');
 
-    // Table name (possibly schema.table)
     this.writeTableRef();
 
-    // Expect (
     if (this.peek()?.type !== 'oparen') return;
 
     this.emit(' ');
     this.emit(this.advance().value); // (
 
-    // Column definitions - one per line
     const colIndent = stmtIndent + INDENT_SIZE;
     while (!this.atEnd() && this.peek()?.type !== 'cparen') {
       if (this.peek()?.type === 'comment') {
@@ -1743,12 +642,10 @@ class SqlFormatter {
       }
     }
 
-    // Closing )
     this.newLine(stmtIndent);
     if (this.peek()?.type === 'cparen') {
       this.emit(this.advance().value); // )
     }
-    // Optional trailing semicolon
     if (this.peek()?.type === 'semicolon') {
       this.emit(this.advance().value);
     }
@@ -1772,13 +669,11 @@ class SqlFormatter {
     this.emitToken(this.advance()); // INSERT or INSERT INTO (merged)
     this.emit(' ');
 
-    // INTO (only if not already part of merged token)
     if (this.upper() === 'INTO') {
       this.emitToken(this.advance());
       this.emit(' ');
     }
 
-    // Table name and optional column list
     this.writeInlineUntil(
       () => this.isWordAt(0, 'VALUES', 'SELECT', 'EXEC', 'EXECUTE') || this.isStatementStart(),
     );
@@ -1805,7 +700,6 @@ class SqlFormatter {
     this.emit(' ');
     this.writeTableRef();
 
-    // SET clause
     if (this.upper() === 'SET') {
       this.newLine(stmtIndent);
       this.emitToken(this.advance()); // SET
@@ -1829,8 +723,7 @@ class SqlFormatter {
         continue;
       }
 
-      // Handle CASE expression
-      if (token.type === 'word' && token.value.toUpperCase() === 'CASE') {
+      if (token.type === 'word' && token.upper === 'CASE') {
         if (this.needsSpaceBefore(token, prevToken)) this.emit(' ');
         this.formatCaseExpression(stmtIndent);
         prevToken = null;
@@ -1860,7 +753,6 @@ class SqlFormatter {
     const stmtIndent = this.indent;
     this.emitToken(this.advance()); // DELETE or DELETE FROM (merged)
 
-    // Optional FROM (only if not already part of merged token)
     if (this.upper() === 'FROM') {
       this.emit(' ');
       this.emitToken(this.advance()); // FROM
@@ -1869,7 +761,6 @@ class SqlFormatter {
     this.emit(' ');
     this.writeTableRef();
 
-    // Trailing space if WHERE follows
     if (this.upper() === 'WHERE') this.emit(' ');
 
     this.formatOptionalClauses(stmtIndent);
@@ -1886,7 +777,6 @@ class SqlFormatter {
     }
     this.emitToken(this.advance()); // SELECT
 
-    // DISTINCT / TOP N - keep on SELECT line
     if (this.upper() === 'DISTINCT') {
       this.emit(' ');
       this.emitToken(this.advance());
@@ -1895,18 +785,14 @@ class SqlFormatter {
       this.emit(' ');
       this.emitToken(this.advance()); // TOP
       this.emit(' ');
-      // Number or expression
       if (this.peek()?.type === 'oparen') {
         this.writeInlineParens();
       } else {
-        this.emitToken(this.advance()); // the number
+        this.emitToken(this.advance());
       }
     }
 
-    // SELECT columns - one per line, indented
     this.formatSelectColumns(stmtIndent);
-
-    // Clauses
     this.formatOptionalClauses(stmtIndent);
   }
 
@@ -1916,13 +802,11 @@ class SqlFormatter {
 
     while (!this.atEnd()) {
       if (this.isClauseKeyword() || this.isStatementStart()) break;
-      // Also stop at END keyword (for subqueries inside CASE)
       if (this.isEndKeyword()) break;
-      // Stop at close paren or semicolon
       if (this.peek()?.type === 'cparen' || this.peek()?.type === 'semicolon') break;
 
       if (!firstCol && this.peek()?.type === 'comma') {
-        this.advance(); // consume trailing comma from previous column
+        this.advance();
       }
 
       if (this.peek()?.type === 'comment') {
@@ -1942,7 +826,6 @@ class SqlFormatter {
         return false;
       });
 
-      // Emit the comma or semicolon at the end of the column line
       if (this.peek()?.type === 'comma') {
         this.emit(',');
       }
@@ -1962,7 +845,6 @@ class SqlFormatter {
     this.emitToken(this.advance()); // WITH
     this.emit(' ');
 
-    // CTE definitions (possibly multiple, comma-separated)
     let firstCte = true;
     while (!this.atEnd()) {
       if (this.peek()?.type === 'comment') {
@@ -1973,11 +855,9 @@ class SqlFormatter {
         this.newLine(stmtIndent);
       }
 
-      // CTE name
-      this.emitToken(this.advance());
+      this.emitToken(this.advance()); // CTE name
       this.emit(' ');
 
-      // AS
       if (this.upper() === 'AS') {
         this.emitToken(this.advance());
         this.emit(' ');
@@ -1987,11 +867,9 @@ class SqlFormatter {
         this.emitCommentRun(stmtIndent);
       }
 
-      // (
       if (this.peek()?.type === 'oparen') {
         this.emit(this.advance().value); // (
 
-        // Format the CTE body (a SELECT query)
         const bodyIndent = stmtIndent + INDENT_SIZE;
         this.newLine(bodyIndent);
         this.indent = bodyIndent;
@@ -2006,7 +884,6 @@ class SqlFormatter {
         }
         this.indent = stmtIndent;
 
-        // )
         this.newLine(stmtIndent);
         if (this.peek()?.type === 'cparen') {
           this.emit(this.advance().value); // )
@@ -2019,9 +896,6 @@ class SqlFormatter {
         this.emitCommentRun(stmtIndent);
       }
 
-      // Check for another CTE (comma separator).
-      // The comma is consumed here; it is re-emitted via this.emit(",") at the
-      // top of the next iteration so it appears before the next CTE name.
       if (this.peek()?.type !== 'comma') break;
       this.advance(); // consume comma
     }
@@ -2030,7 +904,6 @@ class SqlFormatter {
       this.emitCommentRun(stmtIndent);
     }
 
-    // The DML statement after the CTE
     this.newLine(stmtIndent);
     this.formatDmlAfterCte();
   }
@@ -2057,44 +930,28 @@ class SqlFormatter {
     }
   }
 
-  // --- Optional clauses (FROM, WHERE, JOIN, GROUP BY, ORDER BY, HAVING, etc.) ---
+  // --- Optional clauses (FROM, WHERE, JOIN, GROUP BY, ORDER BY, WINDOW, OPTION, etc.) ---
   private formatOptionalClauses(stmtIndent: number): void {
     while (!this.atEnd()) {
       const u = this.upper();
 
       if (this.isStatementStart()) break;
-      // Stop at close paren (e.g., end of CTE body)
       if (this.peek()?.type === 'cparen') break;
 
-      // A statement terminator here means the last clause (FROM/JOIN, whose
-      // own table-reference parsing doesn't absorb trailing tokens the way
-      // writeInlineUntil-based clauses do) left it dangling - emit it so it
-      // isn't silently dropped by the caller's semicolon-skipping.
       if (this.peek()?.type === 'semicolon') {
         this.emit(this.advance().value);
         break;
       }
 
-      // Comments between clauses: emit on their own line(s) at the clause
-      // indent level if followed by a clause keyword. If followed by a new
-      // statement, break so formatStatementList handles them as leading comments.
       if (this.peek()?.type === 'comment') {
         let offset = 1;
         while (this.peek(offset)?.type === 'comment') offset++;
         const nextTok = this.peek(offset);
         const nextUpper = nextTok?.type === 'word' ? nextTok.upper : '';
         const isClauseNext =
-          nextUpper === 'FROM' ||
-          nextUpper === 'WHERE' ||
-          nextUpper === 'GROUP BY' ||
-          nextUpper === 'ORDER BY' ||
-          nextUpper === 'HAVING' ||
-          nextUpper === 'OUTPUT' ||
-          nextUpper === 'OFFSET' ||
-          nextUpper === 'FOR XML' ||
-          nextUpper === 'FOR JSON' ||
-          nextUpper === 'ON' ||
-          JOIN_START_KEYWORDS.has(nextUpper);
+          CLAUSE_KEYWORDS.has(nextUpper) ||
+          JOIN_START_KEYWORDS.has(nextUpper) ||
+          nextUpper === 'ON';
 
         if (isClauseNext) {
           this.emitCommentRun(stmtIndent);
@@ -2172,6 +1029,16 @@ class SqlFormatter {
         continue;
       }
 
+      if (u === 'WINDOW') {
+        this.newLine(stmtIndent);
+        this.emitToken(this.advance()); // WINDOW
+        this.emit(' ');
+        this.writeInlineUntil(
+          () => this.isClauseKeyword() || this.isStatementStart() || this.peek()?.type === 'cparen',
+        );
+        continue;
+      }
+
       if (
         u === 'UNION' ||
         u === 'UNION ALL' ||
@@ -2181,7 +1048,7 @@ class SqlFormatter {
         u === 'INTERSECT ALL'
       ) {
         this.newLine(stmtIndent);
-        this.emitToken(this.advance()); // UNION/UNION ALL/EXCEPT/INTERSECT etc.
+        this.emitToken(this.advance());
         this.newLine(stmtIndent);
         if (this.upper() === 'SELECT') {
           this.formatSelectQuery(stmtIndent);
@@ -2196,12 +1063,12 @@ class SqlFormatter {
         this.emit(' ');
         this.writeInlineUntil(
           () =>
-            this.isWordAt(0, 'FETCH') ||
+            this.upper() === 'FETCH' ||
             this.isClauseKeyword() ||
             this.isStatementStart() ||
             this.peek()?.type === 'cparen',
         );
-        if (this.isWordAt(0, 'FETCH')) {
+        if (this.upper() === 'FETCH') {
           this.emit(' ');
           this.emitToken(this.advance()); // FETCH
           this.emit(' ');
@@ -2213,17 +1080,51 @@ class SqlFormatter {
         continue;
       }
 
-      if (u === 'FOR XML' || u === 'FOR JSON') {
+      if (u === 'OPTION') {
         this.newLine(stmtIndent);
-        this.emitToken(this.advance()); // FOR XML / FOR JSON
+        this.emitToken(this.advance()); // OPTION
         this.emit(' ');
-        this.writeInlineUntil(
-          () => this.isClauseKeyword() || this.isStatementStart() || this.peek()?.type === 'cparen',
-        );
+        if (this.peek()?.type === 'oparen') {
+          this.writeInlineParens();
+        } else {
+          this.writeInlineUntil(
+            () =>
+              this.isClauseKeyword() || this.isStatementStart() || this.peek()?.type === 'cparen',
+          );
+        }
         continue;
       }
 
-      // Unknown clause - stop
+      if (
+        u === 'FOR XML' ||
+        u === 'FOR JSON' ||
+        u === 'FOR BROWSE' ||
+        u === 'FOR XML PATH' ||
+        u === 'FOR XML RAW' ||
+        u === 'FOR XML AUTO' ||
+        u === 'FOR XML EXPLICIT' ||
+        u === 'FOR JSON PATH' ||
+        u === 'FOR JSON AUTO'
+      ) {
+        this.newLine(stmtIndent);
+        this.emitToken(this.advance());
+        if (
+          !this.atEnd() &&
+          !this.isClauseKeyword() &&
+          !this.isStatementStart() &&
+          this.peek()?.type !== 'semicolon'
+        ) {
+          if (this.peek()?.type !== 'oparen') {
+            this.emit(' ');
+          }
+          this.writeInlineUntil(
+            () =>
+              this.isClauseKeyword() || this.isStatementStart() || this.peek()?.type === 'cparen',
+          );
+        }
+        continue;
+      }
+
       break;
     }
   }
@@ -2231,20 +1132,14 @@ class SqlFormatter {
   // --- JOIN clause ---
   private formatJoinClause(stmtIndent: number): void {
     this.newLine(stmtIndent);
-
-    // With merged tokens, the entire join keyword is a single token
-    // (e.g., "LEFT OUTER JOIN", "INNER JOIN", "CROSS APPLY", or plain "JOIN")
     const joinUpper = this.upper();
     this.emitToken(this.advance());
-
     this.emit(' ');
-    // APPLY takes table-valued functions with parenthesized arguments
+
     const isApply = joinUpper.endsWith('APPLY');
     this.writeTableRef(isApply);
 
-    // ON clause (not used with APPLY or CROSS JOIN)
     if (this.upper() === 'ON') {
-      // Trailing space after table ref on the JOIN line
       this.emit(' ');
       this.newLine(stmtIndent + INDENT_SIZE);
       this.emitToken(this.advance()); // ON
@@ -2261,19 +1156,13 @@ class SqlFormatter {
 
     const stopCondition = () =>
       this.isAndOr() ||
-      this.isClauseKeywordNotAndOr() ||
+      this.isClauseKeyword() ||
       this.isStatementStart() ||
       this.peek()?.type === 'cparen';
 
-    // First condition
     this.writeInlineUntil(stopCondition);
-    // Trailing space if AND/OR continuation follows
     if (this.isAndOr()) this.emit(' ');
 
-    // AND/OR continuations - aligned so conditions line up with WHERE condition
-    // WHERE has 6 chars (including trailing space), AND has 4, OR has 3
-    // AND indent = stmtIndent + 6 - 4 = stmtIndent + 2
-    // OR  indent = stmtIndent + 6 - 3 = stmtIndent + 3
     while (this.isAndOr()) {
       const kw = this.upper();
       const alignIndent = kw === 'AND' ? stmtIndent + 2 : stmtIndent + 3;
@@ -2284,27 +1173,18 @@ class SqlFormatter {
     }
   }
 
-  private isClauseKeywordNotAndOr(): boolean {
-    const u = this.upper();
-    if (u === 'AND' || u === 'OR') return false;
-    return this.isClauseKeyword();
-  }
-
   // --- CASE expression ---
   private formatCaseExpression(lineIndent: number): void {
     const caseCol = this.currentLine.length;
     this.emitToken(this.advance()); // CASE
 
-    // Check for simple CASE (CASE expr WHEN ...)
     if (!this.isWordAt(0, 'WHEN', 'ELSE', 'END')) {
       this.emit(' ');
       this.writeInlineUntil(() => this.isWordAt(0, 'WHEN', 'ELSE', 'END'));
     }
 
-    // Trailing space after CASE keyword line
     this.emit(' ');
 
-    // WHEN/ELSE/END clauses
     while (!this.atEnd()) {
       const u = this.upper();
 
@@ -2332,7 +1212,6 @@ class SqlFormatter {
     this.emitToken(this.advance()); // IF
     this.emit(' ');
 
-    // Write condition (everything until BEGIN or a statement start that's not part of the condition)
     this.writeInlineUntil(
       () =>
         this.upper() === 'BEGIN' ||
@@ -2346,15 +1225,12 @@ class SqlFormatter {
     }
 
     if (this.upper() === 'BEGIN') {
-      // Block body
       this.newLine(stmtIndent);
       this.formatBeginEndBlock();
     } else if (this.upper() === 'BEGIN TRY') {
-      // TRY/CATCH body
       this.newLine(stmtIndent);
       this.formatBeginTryCatch();
     } else {
-      // Single statement body, indented
       this.indent = stmtIndent + INDENT_SIZE;
       this.newLine();
       this.formatStatement();
@@ -2379,7 +1255,6 @@ class SqlFormatter {
       }
 
       if (this.upper() === 'IF') {
-        // ELSE IF chain
         this.emit(' ');
         this.formatIf();
       } else if (this.upper() === 'BEGIN') {
@@ -2399,8 +1274,6 @@ class SqlFormatter {
 
   // --- BEGIN...END block (plain) ---
   private formatBegin(): void {
-    // With merged tokens, BEGIN TRY/CATCH/TRAN are handled by separate cases.
-    // This handles only plain BEGIN...END blocks.
     this.formatBeginEndBlock();
   }
 
@@ -2408,12 +1281,10 @@ class SqlFormatter {
     const blockIndent = this.indent;
     this.emitToken(this.advance()); // BEGIN
 
-    // Content
     this.indent = blockIndent + INDENT_SIZE;
     this.formatStatementList(true);
     this.indent = blockIndent;
 
-    // END
     if (this.upper() === 'END') {
       this.newLine(blockIndent);
       this.emitToken(this.advance()); // END
@@ -2424,15 +1295,12 @@ class SqlFormatter {
   private formatBeginTryCatch(): void {
     const blockIndent = this.indent;
 
-    // BEGIN TRY or BEGIN CATCH (single merged token)
     this.emitToken(this.advance());
 
-    // Block content
     this.indent = blockIndent + INDENT_SIZE;
     this.formatStatementList(true);
     this.indent = blockIndent;
 
-    // END TRY or END CATCH (single merged token)
     if (this.upper() === 'END TRY' || this.upper() === 'END CATCH') {
       this.newLine(blockIndent);
       this.emitToken(this.advance());
@@ -2441,7 +1309,6 @@ class SqlFormatter {
       this.emitToken(this.advance());
     }
 
-    // BEGIN CATCH (immediately follows END TRY, no blank lines)
     if (this.upper() === 'BEGIN CATCH') {
       this.newLine(blockIndent);
       this.formatBeginTryCatch();
@@ -2450,7 +1317,7 @@ class SqlFormatter {
 
   // --- BEGIN TRAN/TRANSACTION ---
   private formatBeginTran(): void {
-    this.emitToken(this.advance()); // BEGIN TRAN or BEGIN TRANSACTION (merged)
+    this.emitToken(this.advance());
     if (this.peek()?.type === 'semicolon') {
       this.emit(this.advance().value);
     }
@@ -2458,10 +1325,10 @@ class SqlFormatter {
 
   // --- Transaction commands ---
   private formatTransactionCmd(): void {
-    this.emitToken(this.advance()); // COMMIT, ROLLBACK, SAVE, COMMIT TRAN, SAVE TRAN, etc.
+    this.emitToken(this.advance());
     if (this.isWordAt(0, 'TRAN', 'TRANSACTION', 'WORK')) {
       this.emit(' ');
-      this.emitToken(this.advance()); // TRAN/TRANSACTION/WORK
+      this.emitToken(this.advance());
     }
     if (!this.atEnd() && !this.isStatementStart() && this.peek()?.type !== 'semicolon') {
       this.emit(' ');
@@ -2475,7 +1342,6 @@ class SqlFormatter {
   // --- Simple commands (THROW, RAISERROR, RETURN, etc.) ---
   private formatSimpleCmd(): void {
     this.emitToken(this.advance());
-    // Consume any remaining tokens on this statement
     if (!this.atEnd() && !this.isStatementStart() && this.peek()?.type !== 'semicolon') {
       this.emit(' ');
       this.writeInlineUntil(() => this.isStatementStart());
@@ -2484,7 +1350,7 @@ class SqlFormatter {
 
   // --- EXEC/EXECUTE ---
   private formatExec(): void {
-    this.emitToken(this.advance()); // EXEC or EXECUTE
+    this.emitToken(this.advance());
     this.emit(' ');
     this.writeInlineUntil(() => this.isStatementStart());
   }
@@ -2495,7 +1361,6 @@ class SqlFormatter {
     this.emitToken(this.advance()); // WHILE
     this.emit(' ');
 
-    // Condition
     this.writeInlineUntil(
       () =>
         this.upper() === 'BEGIN' ||
@@ -2511,7 +1376,6 @@ class SqlFormatter {
       this.newLine(stmtIndent);
       this.formatBeginEndBlock();
     } else {
-      // Single statement body, indented
       this.indent = stmtIndent + INDENT_SIZE;
       this.newLine();
       this.formatStatement();
@@ -2536,12 +1400,10 @@ class SqlFormatter {
   // --- USE statement ---
   private formatUse(): void {
     this.emitToken(this.advance()); // USE
-    // Write the database name / identifier following USE
     if (!this.atEnd() && !this.isStatementStart()) {
       this.emit(' ');
       this.writeInlineUntil(() => this.isStatementStart());
     }
-    // Optional trailing semicolon
     if (this.peek()?.type === 'semicolon') {
       this.emit(this.advance().value);
     }
@@ -2550,16 +1412,13 @@ class SqlFormatter {
   // --- GO batch separator ---
   private formatGo(): void {
     this.emitToken(this.advance()); // GO
-    // Optional repeat count (GO 2)
     if (this.peek()?.type === 'number') {
       this.emit(' ');
       this.emitToken(this.advance());
     }
-    // Optional semicolon after GO
     if (this.peek()?.type === 'semicolon') {
       this.emit(this.advance().value);
     }
-    // Inline comment on the GO line
     if (this.peek()?.type === 'comment') {
       this.emit(' ');
       const c = this.advance();
@@ -2569,12 +1428,6 @@ class SqlFormatter {
 
   // --- Generic line ---
   private formatGenericLine(): void {
-    // Statements dispatched here (TRUNCATE, ALTER, OPEN, CLOSE, FETCH,
-    // DEALLOCATE, BACKUP, RESTORE, DBCC, non-TABLE CREATE) are themselves
-    // recognized by isStatementStart(). The leading keyword must always be
-    // consumed unconditionally before that same check is used as a stop
-    // condition, otherwise it stops on its own first token and the
-    // statement-list loop spins forever without making progress.
     if (this.atEnd()) return;
     this.emitToken(this.advance());
     if (!this.atEnd() && !this.isStatementStart()) {
@@ -2583,12 +1436,10 @@ class SqlFormatter {
     }
   }
 
-  // --- Table reference (name, possibly schema.name or db.schema.name, or table-valued function) ---
+  // --- Table reference ---
   private writeTableRef(consumeParens: boolean = false): void {
-    // Handle derived table (subquery) as table source: (SELECT ...) [AS] alias
     if (this.isSubqueryStart()) {
       this.writeSubquery();
-      // Optional alias after closing )
       if (this.peek()?.type === 'word' && !this.isClauseKeyword() && !this.isStatementStart()) {
         const u = this.upper();
         if (u === 'AS') {
@@ -2607,23 +1458,19 @@ class SqlFormatter {
     }
 
     if (this.atEnd() || this.peek()?.type !== 'word') return;
-    this.emitToken(this.advance()); // table name or first part
+    this.emitToken(this.advance());
 
     while (this.peek()?.type === 'dot') {
       this.emit(this.advance().value); // .
       if (this.peek()?.type === 'word') {
-        this.emitToken(this.advance()); // next part
+        this.emitToken(this.advance());
       }
     }
 
-    // Parenthesized arguments (for table-valued functions in APPLY contexts)
     if (consumeParens && this.peek()?.type === 'oparen') {
       this.writeInlineParens();
     }
 
-    // Optional alias. Must be checked before the WITH (hint) below: the real
-    // syntax is "table_name [AS] table_alias [WITH (table_hint [,...])]", so
-    // the hint follows the alias, not the other way around.
     if (this.peek()?.type === 'word' && !this.isClauseKeyword() && !this.isStatementStart()) {
       const u = this.upper();
       if (u === 'AS') {
@@ -2639,7 +1486,6 @@ class SqlFormatter {
       }
     }
 
-    // Optional table hint WITH (NOLOCK), e.g. "dbo.Foo AS f WITH (NOLOCK)"
     if (this.upper() === 'WITH' && this.isType(1, 'oparen')) {
       this.emit(' ');
       this.emitToken(this.advance()); // WITH
@@ -2655,10 +1501,6 @@ class SqlFormatter {
     while (!this.atEnd() && !stop()) {
       const token = this.peek()!;
 
-      // Handle comment tokens inline.
-      // • Standalone comments (with hasPrecedingNewline = true) stop inline processing
-      //   so statement/clause handlers process them via emitCommentRun.
-      // • Inline trailing comments (on the same line as code) are emitted in-place.
       if (token.type === 'comment') {
         if (token.hasPrecedingNewline) {
           break;
@@ -2667,14 +1509,12 @@ class SqlFormatter {
         this.advance();
         this.emitCommentText(token.value);
         if (token.value.startsWith('--') || token.value.includes('\n')) {
-          // Inline trailing comment terminated the logical line; let the caller start a fresh one.
           break;
         }
         prevToken = token;
         continue;
       }
 
-      // Handle parenthesized expressions inline
       if (token.type === 'oparen') {
         if (this.needsSpaceBefore(token, prevToken)) this.emit(' ');
         if (this.isSubqueryStart()) {
@@ -2686,9 +1526,7 @@ class SqlFormatter {
         continue;
       }
 
-      // Handle CASE...END as a single inline unit (prevents END from
-      // being mistaken for a block-level END by stop conditions)
-      if (token.type === 'word' && token.value.toUpperCase() === 'CASE') {
+      if (token.type === 'word' && token.upper === 'CASE') {
         if (this.needsSpaceBefore(token, prevToken)) this.emit(' ');
         this.writeInlineCase();
         prevToken = makeToken('word', 'END');
@@ -2702,7 +1540,6 @@ class SqlFormatter {
     }
   }
 
-  // Write a CASE...END expression entirely inline
   private writeInlineCase(): void {
     this.emitToken(this.advance()); // CASE
     let depth = 1;
@@ -2712,7 +1549,7 @@ class SqlFormatter {
       const token = this.peek()!;
 
       if (token.type === 'word') {
-        const upper = token.value.toUpperCase();
+        const upper = token.upper;
         if (upper === 'CASE') depth++;
         if (upper === 'END' && --depth === 0) {
           this.advance();
@@ -2722,7 +1559,6 @@ class SqlFormatter {
         }
       }
 
-      // Handle parenthesized sub-expressions
       if (token.type === 'oparen') {
         if (this.needsSpaceBefore(token, prevToken)) this.emit(' ');
         if (this.isSubqueryStart()) {
@@ -2734,7 +1570,6 @@ class SqlFormatter {
         continue;
       }
 
-      // Handle comment tokens (same rules as writeInlineUntil)
       if (token.type === 'comment') {
         if (token.hasPrecedingNewline) {
           this.newLine(this.indent + INDENT_SIZE);
@@ -2761,11 +1596,7 @@ class SqlFormatter {
     }
   }
 
-  // Format a subquery (SELECT inside parens) with proper indentation.
-  // The opening ( is on the current line; content is indented; ) is on its own line.
   private writeSubquery(): void {
-    // baseIndent = number of leading spaces on the current line, so ) aligns with
-    // the line that contains (, regardless of this.indent (which tracks newLine() default).
     const baseIndent = this.currentLine.length - this.currentLine.trimStart().length;
     this.emit('(');
     this.advance(); // consume (
@@ -2773,7 +1604,6 @@ class SqlFormatter {
     this.newLine(subIndent);
     const savedIndent = this.indent;
     this.indent = subIndent;
-    // Emit any comment tokens that appear before SELECT
     this.emitCommentRun(subIndent);
     if (this.upper() === 'SELECT') {
       this.formatSelectQuery(subIndent);
@@ -2784,7 +1614,7 @@ class SqlFormatter {
     this.indent = savedIndent;
     this.newLine(baseIndent);
     if (this.peek()?.type === 'cparen') {
-      this.advance(); // consume )
+      this.advance();
     }
     this.emit(')');
   }
@@ -2799,10 +1629,9 @@ class SqlFormatter {
     while (!this.atEnd() && depth > 0) {
       const token = this.peek()!;
 
-      // Detect a SELECT-subquery nested inside parens and format it with proper indentation
       if (token.type === 'oparen' && this.isSubqueryStart()) {
         if (this.needsSpaceBefore(token, prevToken)) this.emit(' ');
-        this.writeSubquery(); // writeSubquery emits its own ( and )
+        this.writeSubquery();
         prevToken = makeToken('cparen', ')');
         continue;
       }
@@ -2825,82 +1654,6 @@ class SqlFormatter {
   }
 }
 
-// --- VSCode provider ---
-export class TsqlFormattingProvider
-  implements vscode.DocumentFormattingEditProvider, vscode.DocumentRangeFormattingEditProvider
-{
-  provideDocumentFormattingEdits(document: vscode.TextDocument): vscode.TextEdit[] {
-    const vscodeMod: typeof import('vscode') = require('vscode');
-    const fullRange = new vscodeMod.Range(
-      document.positionAt(0),
-      document.positionAt(document.getText().length),
-    );
-    return this.provideFormattingEdits(document, fullRange);
-  }
-
-  provideDocumentRangeFormattingEdits(
-    document: vscode.TextDocument,
-    range: vscode.Range,
-  ): vscode.TextEdit[] {
-    if (range.isEmpty) {
-      return [];
-    }
-
-    return this.provideFormattingEdits(document, range);
-  }
-
-  private provideFormattingEdits(
-    document: vscode.TextDocument,
-    range: vscode.Range,
-  ): vscode.TextEdit[] {
-    const vscodeMod: typeof import('vscode') = require('vscode');
-    const config = vscodeMod.workspace.getConfiguration('tsqlFormatter');
-    const options: FormatterOptions = {
-      breakOnKeywords: config.get<boolean>('breakOnKeywords', true),
-      identifierCase: config.get<CaseOption>('identifierCase', 'preserve'),
-      keywordCase: config.get<KeywordCaseOption>('keywordCase', 'preserve'),
-      linesBetweenQueries: Math.max(0, config.get<number>('linesBetweenQueries', 2)),
-      maxLineLength: Math.max(20, config.get<number>('maxLineLength', 100)),
-      useBrackets: config.get<boolean>('useBrackets', false),
-      useMaxLineLength: config.get<boolean>('useMaxLineLength', true),
-    };
-
-    const source = document.getText(range);
-
-    try {
-      const formatted = formatTsql(source, options);
-
-      if (formatted === source) {
-        return [];
-      }
-
-      return [vscodeMod.TextEdit.replace(range, formatted)];
-    } catch (err) {
-      // Ensure we have an Error-like object
-      const error = err instanceof Error ? err : new Error(String(err));
-      getOutputChannel().appendLine(`[tsql-formatter] Formatting failed: ${error.message}`);
-      getOutputChannel().appendLine(error.stack ?? 'no stack');
-      getOutputChannel().show(true);
-      void vscodeMod.window.showErrorMessage(
-        'tsql-formatter: failed to format document. See "TSQL Formatter" output for details.',
-      );
-      // Fall back to no edits so VS Code leaves the document unchanged
-      return [];
-    }
-  }
-}
-
-let _outputChannel: vscode.OutputChannel | null = null;
-export function getOutputChannel(): vscode.OutputChannel {
-  if (!_outputChannel) {
-    const vscodeMod: typeof import('vscode') = require('vscode');
-    _outputChannel = vscodeMod.window.createOutputChannel('TSQL Formatter');
-  }
-  return _outputChannel;
-}
-
-export { tokenize, mergeMultiWordKeywords, SqlFormatter };
-
 export function formatTsql(input: string, options: FormatterOptions): string {
   const normalized = input.replace(/\r\n?/g, '\n').trim();
   if (!normalized) {
@@ -2911,4 +1664,39 @@ export function formatTsql(input: string, options: FormatterOptions): string {
   const tokens = mergeMultiWordKeywords(rawTokens);
   const formatter = new SqlFormatter(tokens, options);
   return formatter.format();
+}
+
+export async function formatTsqlAsync(
+  input: string,
+  options: FormatterOptions,
+  cancellationToken?: { readonly isCancellationRequested: boolean },
+): Promise<string> {
+  const normalized = input.replace(/\r\n?/g, '\n').trim();
+  if (!normalized) {
+    return input;
+  }
+
+  if (cancellationToken?.isCancellationRequested) {
+    return input;
+  }
+
+  const rawTokens = tokenize(normalized);
+  if (cancellationToken?.isCancellationRequested) {
+    return input;
+  }
+
+  if (rawTokens.length > 5000) {
+    await yieldToEventLoop();
+    if (cancellationToken?.isCancellationRequested) {
+      return input;
+    }
+  }
+
+  const tokens = mergeMultiWordKeywords(rawTokens);
+  if (cancellationToken?.isCancellationRequested) {
+    return input;
+  }
+
+  const formatter = new SqlFormatter(tokens, options, cancellationToken);
+  return formatter.formatAsync();
 }
