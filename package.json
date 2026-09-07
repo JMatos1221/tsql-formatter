@@ -96,11 +96,6 @@
     "watch": "tsc -watch -p ./",
     "prepare": "npm run compile"
   },
-  "files": [
-    "out",
-    "README.md",
-    "LICENSE"
-  ],
   "devDependencies": {
     "@types/node": "26.5.0",
     "@types/vscode": "^1.136.0",
