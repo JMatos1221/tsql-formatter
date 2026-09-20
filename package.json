@@ -21,7 +21,7 @@
     "extension"
   ],
   "engines": {
-    "vscode": "^1.136.0"
+    "vscode": "^1.138.0"
   },
   "categories": [
     "Formatters"
@@ -97,8 +97,8 @@
     "prepare": "npm run compile"
   },
   "devDependencies": {
-    "@types/node": "26.5.0",
-    "@types/vscode": "^1.136.0",
+    "@types/node": "26.6.2",
+    "@types/vscode": "^1.138.0",
     "typescript": "7.0.2"
   }
 }
