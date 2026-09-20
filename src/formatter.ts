@@ -273,6 +273,12 @@ export class SqlFormatter {
     if (prev.type === 'dot' || token.type === 'dot') return false;
     if (token.type === 'semicolon') return false;
 
+    // Scope resolution operator :: (no space before or after)
+    if (token.value === '::' || prev.value === '::') return false;
+
+    // Bitwise NOT ~ (no space between ~ and operand)
+    if (prev.value === '~') return false;
+
     // No space between function/type name and (
     if (token.type === 'oparen' && prev.type === 'word') {
       const upper = prev.upper;
@@ -298,7 +304,12 @@ export class SqlFormatter {
   private isStatementStart(): boolean {
     const u = this.upper();
     if (u === 'ELSE') return true;
-    if (u === 'WITH') return !WITH_OPTION_KEYWORDS.has(this.upper(1));
+    if (u === 'ALTER COLUMN') return false;
+    if (u === 'ALTER' && this.upper(1) === 'COLUMN') return false;
+    if (u === 'WITH') {
+      if (this.isType(1, 'oparen')) return false; // WITH (...) table/index hint, not a CTE
+      return !WITH_OPTION_KEYWORDS.has(this.upper(1));
+    }
     if (STATEMENT_START_KEYWORDS.has(u)) return true;
     if (u === 'CREATE' && CREATE_DROP_OBJECT_KEYWORDS.has(this.upper(1))) return true;
     if (u === 'DROP' && CREATE_DROP_OBJECT_KEYWORDS.has(this.upper(1))) return true;
@@ -480,6 +491,8 @@ export class SqlFormatter {
       case 'SELECT':
         return this.formatSelectStatement();
       case 'MERGE':
+      case 'MERGE INTO':
+        return this.formatMerge();
       case 'BULK':
       case 'BULK INSERT':
       case 'REVERT':
@@ -539,6 +552,8 @@ export class SqlFormatter {
       case 'GO':
         return this.formatGo();
       case 'ALTER':
+      case 'ALTER TABLE':
+        return this.formatAlter();
       case 'OPEN':
       case 'CLOSE':
       case 'FETCH':
@@ -761,9 +776,155 @@ export class SqlFormatter {
     this.emit(' ');
     this.writeTableRef();
 
-    if (this.upper() === 'WHERE') this.emit(' ');
-
     this.formatOptionalClauses(stmtIndent);
+  }
+
+  // --- MERGE ---
+  private formatMerge(): void {
+    const stmtIndent = this.indent;
+    this.emitToken(this.advance()); // MERGE or MERGE INTO (merged)
+    this.emit(' ');
+
+    if (this.upper() === 'INTO') {
+      this.emitToken(this.advance());
+      this.emit(' ');
+    }
+
+    this.writeTableRef();
+
+    // USING <source>
+    if (this.upper() === 'USING') {
+      this.newLine(stmtIndent);
+      this.emitToken(this.advance()); // USING
+      this.emit(' ');
+      this.writeTableRef();
+    }
+
+    // ON <condition>
+    if (this.upper() === 'ON') {
+      this.newLine(stmtIndent + INDENT_SIZE);
+      this.emitToken(this.advance()); // ON
+      this.emit(' ');
+      this.writeInlineUntil(
+        () =>
+          this.upper().startsWith('WHEN') ||
+          this.isStatementStart() ||
+          this.peek()?.type === 'semicolon',
+      );
+    }
+
+    // WHEN clauses
+    while (!this.atEnd()) {
+      if (this.peek()?.type === 'semicolon' || this.isStatementStart()) break;
+
+      const u = this.upper();
+      if (u.startsWith('WHEN')) {
+        this.newLine(stmtIndent);
+        this.emitToken(this.advance()); // WHEN MATCHED THEN, etc.
+
+        if (!u.endsWith('THEN')) {
+          this.emit(' ');
+          this.writeInlineUntil(
+            () =>
+              this.upper() === 'THEN' ||
+              this.isStatementStart() ||
+              this.peek()?.type === 'semicolon',
+          );
+          if (this.upper() === 'THEN') {
+            this.emit(' ');
+            this.emitToken(this.advance());
+          }
+        }
+
+        const actionIndent = stmtIndent + INDENT_SIZE;
+        this.newLine(actionIndent);
+        const actionUpper = this.upper();
+
+        if (actionUpper === 'UPDATE') {
+          this.emitToken(this.advance()); // UPDATE
+          if (this.upper() === 'SET') {
+            this.emit(' ');
+            this.emitToken(this.advance()); // SET
+            this.emit(' ');
+            this.writeInlineUntil(
+              () =>
+                this.upper().startsWith('WHEN') ||
+                this.upper() === 'OUTPUT' ||
+                this.upper() === 'OPTION' ||
+                this.peek()?.type === 'semicolon' ||
+                this.isStatementStart(),
+            );
+          }
+        } else if (actionUpper === 'DELETE') {
+          this.emitToken(this.advance()); // DELETE
+        } else if (actionUpper === 'INSERT') {
+          this.emitToken(this.advance()); // INSERT
+          this.emit(' ');
+          this.writeInlineUntil(
+            () =>
+              this.upper() === 'VALUES' ||
+              this.upper().startsWith('WHEN') ||
+              this.upper() === 'OUTPUT' ||
+              this.peek()?.type === 'semicolon' ||
+              this.isStatementStart(),
+          );
+          if (this.upper() === 'VALUES') {
+            this.newLine(actionIndent);
+            this.emitToken(this.advance()); // VALUES
+            this.emit(' ');
+            this.writeInlineUntil(
+              () =>
+                this.upper().startsWith('WHEN') ||
+                this.upper() === 'OUTPUT' ||
+                this.upper() === 'OPTION' ||
+                this.peek()?.type === 'semicolon' ||
+                this.isStatementStart(),
+            );
+          }
+        } else {
+          this.writeInlineUntil(
+            () =>
+              this.upper().startsWith('WHEN') ||
+              this.upper() === 'OUTPUT' ||
+              this.upper() === 'OPTION' ||
+              this.peek()?.type === 'semicolon' ||
+              this.isStatementStart(),
+          );
+        }
+        continue;
+      }
+
+      if (u === 'OUTPUT') {
+        this.newLine(stmtIndent);
+        this.emitToken(this.advance()); // OUTPUT
+        this.emit(' ');
+        this.writeInlineUntil(
+          () =>
+            this.upper() === 'OPTION' ||
+            this.peek()?.type === 'semicolon' ||
+            this.isStatementStart(),
+        );
+        continue;
+      }
+
+      if (u === 'OPTION') {
+        this.newLine(stmtIndent);
+        this.emitToken(this.advance()); // OPTION
+        this.emit(' ');
+        if (this.peek()?.type === 'oparen') {
+          this.writeInlineParens();
+        } else {
+          this.writeInlineUntil(() => this.peek()?.type === 'semicolon' || this.isStatementStart());
+        }
+        continue;
+      }
+
+      break;
+    }
+
+    if (this.peek()?.type === 'semicolon') {
+      this.emit(this.advance().value);
+    }
   }
 
   // --- SELECT (standalone) ---
@@ -924,7 +1085,8 @@ export class SqlFormatter {
       case 'SELECT':
         return this.formatSelectStatement();
       case 'MERGE':
-        return this.formatInlineStatementToTerminator();
+      case 'MERGE INTO':
+        return this.formatMerge();
       default:
         return this.formatGenericLine();
     }
@@ -965,7 +1127,13 @@ export class SqlFormatter {
         this.newLine(stmtIndent);
         this.emitToken(this.advance()); // FROM
         this.emit(' ');
-        this.writeTableRef();
+        this.writeTableRef(true);
+        while (this.peek()?.type === 'comma') {
+          this.emit(',');
+          this.advance(); // consume comma
+          this.newLine(stmtIndent + INDENT_SIZE);
+          this.writeTableRef(true);
+        }
         continue;
       }
 
@@ -1036,6 +1204,30 @@ export class SqlFormatter {
         this.writeInlineUntil(
           () => this.isClauseKeyword() || this.isStatementStart() || this.peek()?.type === 'cparen',
         );
+        continue;
+      }
+
+      if (u === 'PIVOT' || u === 'UNPIVOT') {
+        this.newLine(stmtIndent);
+        this.emitToken(this.advance()); // PIVOT or UNPIVOT
+        this.emit(' ');
+        if (this.peek()?.type === 'oparen') {
+          this.writeInlineParens();
+        }
+        if (this.peek()?.type === 'word' && !this.isClauseKeyword() && !this.isStatementStart()) {
+          const w = this.upper();
+          if (w === 'AS') {
+            this.emit(' ');
+            this.emitToken(this.advance());
+            this.emit(' ');
+            if (this.peek()?.type === 'word') {
+              this.emitToken(this.advance());
+            }
+          } else if (!isKeywordLike(this.peek()!)) {
+            this.emit(' ');
+            this.emitToken(this.advance());
+          }
+        }
         continue;
       }
 
@@ -1132,15 +1324,12 @@ export class SqlFormatter {
   // --- JOIN clause ---
   private formatJoinClause(stmtIndent: number): void {
     this.newLine(stmtIndent);
-    const joinUpper = this.upper();
     this.emitToken(this.advance());
     this.emit(' ');
 
-    const isApply = joinUpper.endsWith('APPLY');
-    this.writeTableRef(isApply);
+    this.writeTableRef(true);
 
     if (this.upper() === 'ON') {
-      this.emit(' ');
       this.newLine(stmtIndent + INDENT_SIZE);
       this.emitToken(this.advance()); // ON
       this.emit(' ');
@@ -1426,13 +1615,36 @@ export class SqlFormatter {
     }
   }
 
+  // --- ALTER TABLE / ALTER statement ---
+  private formatAlter(): void {
+    this.emitToken(this.advance()); // ALTER or ALTER TABLE (merged)
+    if (!this.atEnd() && !this.isStatementStart() && this.peek()?.type !== 'semicolon') {
+      this.emit(' ');
+      this.writeInlineUntil(() => {
+        if (this.peek()?.type === 'semicolon') return true;
+        if (this.isStatementStart()) {
+          const u = this.upper();
+          if (u === 'ALTER COLUMN' || (u === 'ALTER' && this.upper(1) === 'COLUMN')) return false;
+          return true;
+        }
+        return false;
+      });
+    }
+    if (this.peek()?.type === 'semicolon') {
+      this.emit(this.advance().value);
+    }
+  }
+
   // --- Generic line ---
   private formatGenericLine(): void {
     if (this.atEnd()) return;
     this.emitToken(this.advance());
-    if (!this.atEnd() && !this.isStatementStart()) {
+    if (!this.atEnd() && !this.isStatementStart() && this.peek()?.type !== 'semicolon') {
       this.emit(' ');
-      this.writeInlineUntil(() => this.isStatementStart());
+      this.writeInlineUntil(() => this.isStatementStart() || this.peek()?.type === 'semicolon');
+    }
+    if (this.peek()?.type === 'semicolon') {
+      this.emit(this.advance().value);
     }
   }
 
@@ -1467,8 +1679,17 @@ export class SqlFormatter {
       }
     }
 
-    if (consumeParens && this.peek()?.type === 'oparen') {
+    if (consumeParens && this.peek()?.type === 'oparen' && !this.isSubqueryStart()) {
       this.writeInlineParens();
+    }
+
+    if (this.upper() === 'TABLESAMPLE') {
+      this.emit(' ');
+      this.emitToken(this.advance()); // TABLESAMPLE
+      this.emit(' ');
+      if (this.peek()?.type === 'oparen') {
+        this.writeInlineParens();
+      }
     }
 
     if (this.peek()?.type === 'word' && !this.isClauseKeyword() && !this.isStatementStart()) {
@@ -1483,6 +1704,15 @@ export class SqlFormatter {
       } else if (!isKeywordLike(this.peek()!)) {
         this.emit(' ');
         this.emitToken(this.advance()); // alias
+      }
+    }
+
+    if (this.upper() === 'TABLESAMPLE') {
+      this.emit(' ');
+      this.emitToken(this.advance()); // TABLESAMPLE
+      this.emit(' ');
+      if (this.peek()?.type === 'oparen') {
+        this.writeInlineParens();
       }
     }
 

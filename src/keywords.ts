@@ -237,8 +237,7 @@ export const KEYWORDS = new Set([
   'SEMANTICSIMILARITYTABLE',
   // MERGE
   'MATCHED',
-  'TARGET',
-  'SOURCE',
+  'USING',
   // Other standard & reserved keywords
   'DECLARE',
   'PRINT',
@@ -504,6 +503,19 @@ export const KEYWORDS = new Set([
   'EXTERNAL TABLE',
   'NONCLUSTERED COLUMNSTORE',
   'CLUSTERED COLUMNSTORE',
+  'WHEN NOT MATCHED THEN',
+  'WHEN MATCHED THEN',
+  'WHEN NOT MATCHED',
+  'WHEN MATCHED',
+  'NOT MATCHED BY TARGET',
+  'NOT MATCHED BY SOURCE',
+  'NOT MATCHED THEN',
+  'NOT MATCHED',
+  'MERGE INTO',
+  'ALTER COLUMN',
+  'ALTER TABLE',
+  'BY TARGET',
+  'BY SOURCE',
 ]);
 
 export const FUNCTIONS = new Set([
@@ -715,6 +727,11 @@ export const FUNCTIONS = new Set([
   // AI / Vector functions (SQL Server 2025)
   'VECTOR_DISTANCE',
   'VECTOR_NORM',
+  // Rowset functions
+  'OPENROWSET',
+  'OPENQUERY',
+  'OPENDATASOURCE',
+  'OPENXML',
 ]);
 
 // Data types that take a size/precision parameter in parentheses
@@ -737,6 +754,7 @@ export const TYPES_WITH_PARAMS = new Set([
   'VECTOR',
   'PATH',
   'ROOT',
+  'IDENTITY',
 ]);
 
 // Multi-word keywords: longest patterns first for greedy matching
@@ -764,6 +782,9 @@ export const MULTI_WORD_KEYWORDS: string[][] = [
   ['FOR', 'JSON', 'AUTO'],
   ['EXTERNAL', 'DATA', 'SOURCE'],
   ['EXTERNAL', 'FILE', 'FORMAT'],
+  ['WHEN', 'NOT', 'MATCHED', 'THEN'],
+  ['NOT', 'MATCHED', 'BY', 'TARGET'],
+  ['NOT', 'MATCHED', 'BY', 'SOURCE'],
   // 3-word
   ['CREATE', 'OR', 'ALTER'],
   ['AT', 'TIME', 'ZONE'],
@@ -784,6 +805,9 @@ export const MULTI_WORD_KEYWORDS: string[][] = [
   ['EXTERNAL', 'TABLE'],
   ['NONCLUSTERED', 'COLUMNSTORE'],
   ['CLUSTERED', 'COLUMNSTORE'],
+  ['WHEN', 'MATCHED', 'THEN'],
+  ['WHEN', 'NOT', 'MATCHED'],
+  ['NOT', 'MATCHED', 'THEN'],
   // 2-word
   ['GROUP', 'BY'],
   ['ORDER', 'BY'],
@@ -847,6 +871,13 @@ export const MULTI_WORD_KEYWORDS: string[][] = [
   ['ROLLBACK', 'WORK'],
   ['SAVE', 'TRAN'],
   ['SAVE', 'TRANSACTION'],
+  ['MERGE', 'INTO'],
+  ['ALTER', 'COLUMN'],
+  ['ALTER', 'TABLE'],
+  ['WHEN', 'MATCHED'],
+  ['NOT', 'MATCHED'],
+  ['BY', 'TARGET'],
+  ['BY', 'SOURCE'],
 ];
 
 export const MULTI_WORD_BY_FIRST_WORD: Map<string, string[][]> = new Map();
@@ -882,6 +913,7 @@ export const STATEMENT_START_KEYWORDS = new Set([
   'DELETE FROM',
   'SELECT',
   'MERGE',
+  'MERGE INTO',
   'IF',
   'WHILE',
   'RETURN',
@@ -905,6 +937,7 @@ export const STATEMENT_START_KEYWORDS = new Set([
   'REVOKE',
   'DENY',
   'ALTER',
+  'ALTER TABLE',
   'SET',
   'OPEN',
   'CLOSE',
@@ -980,6 +1013,17 @@ export const CLAUSE_KEYWORDS = new Set([
   'OFFSET',
   'WINDOW',
   'OPTION',
+  'USING',
+  'PIVOT',
+  'UNPIVOT',
+  'TABLESAMPLE',
+  'INCLUDE',
+  'WHEN MATCHED THEN',
+  'WHEN NOT MATCHED THEN',
+  'WHEN NOT MATCHED BY TARGET THEN',
+  'WHEN NOT MATCHED BY SOURCE THEN',
+  'WHEN MATCHED',
+  'WHEN NOT MATCHED',
   'FOR XML',
   'FOR JSON',
   'FOR BROWSE',
