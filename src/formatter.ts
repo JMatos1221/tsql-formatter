@@ -1,16 +1,15 @@
-import type * as vscode from 'vscode';
 import {
-  KEYWORDS,
+  CLAUSE_KEYWORDS,
+  CREATE_DROP_OBJECT_KEYWORDS,
   FUNCTIONS,
+  JOIN_START_KEYWORDS,
+  KEYWORDS,
+  STATEMENT_START_KEYWORDS,
   TYPES_WITH_PARAMS,
   WITH_OPTION_KEYWORDS,
-  STATEMENT_START_KEYWORDS,
-  CREATE_DROP_OBJECT_KEYWORDS,
-  CLAUSE_KEYWORDS,
-  JOIN_START_KEYWORDS,
 } from './keywords';
-import { Token, makeToken, tokenize, mergeMultiWordKeywords } from './tokenizer';
 import { TsqlFormattingProvider, getOutputChannel } from './provider';
+import { Token, makeToken, mergeMultiWordKeywords, tokenize } from './tokenizer';
 
 export type CaseOption = 'upper' | 'lower' | 'preserve';
 export type KeywordCaseOption = 'upper' | 'lower' | 'preserve';
@@ -28,11 +27,11 @@ export interface FormatterOptions {
 // Re-exports for backwards compatibility
 export {
   Token,
-  makeToken,
-  tokenize,
-  mergeMultiWordKeywords,
   TsqlFormattingProvider,
   getOutputChannel,
+  makeToken,
+  mergeMultiWordKeywords,
+  tokenize,
 };
 
 // --- Casing helpers ---

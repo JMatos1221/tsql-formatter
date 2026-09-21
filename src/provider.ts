@@ -1,5 +1,5 @@
 import type * as vscode from 'vscode';
-import { formatTsqlAsync, FormatterOptions, CaseOption, KeywordCaseOption } from './formatter';
+import { CaseOption, FormatterOptions, formatTsqlAsync, KeywordCaseOption } from './formatter';
 
 let _outputChannel: vscode.OutputChannel | null = null;
 export function getOutputChannel(): vscode.OutputChannel {
