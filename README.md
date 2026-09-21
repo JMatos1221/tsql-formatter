@@ -47,7 +47,8 @@ The extension activates automatically when you open a `.sql` file.
   - **Robust Lexing**: Supports Unicode / international identifiers (`código`, `preço`), compound assignment operators (`+=`, `-=`, `*=`, `/=`, `%=`, `&=`, `^=`, `|=`), HierarchyID / CLR scope resolution operator (`::`), hexadecimal literals (`0x...`), scientific notation (`1e5`), nested block comments (`/* ... /* ... */ ... */`), and bracketed identifiers with escaped brackets (`[Table]]Name]`).
 - **Strict & Clean Comment Formatting**: Preserves single-line (`--`) and multi-line (`/* */`) comments, formatting comment runs with precise spacing rules.
 - **Document & Selection Formatting**: Format an entire SQL document or format only the selected SQL statements.
-- **Asynchronous, Non-Blocking Formatting**: Formats large documents without freezing the VS Code editor UI, cooperatively yielding to the event loop and honoring cancellation tokens.
+- **Asynchronous, Non-Blocking Pipeline**: Formats large documents and complex batches without freezing the VS Code editor UI. Cooperatively yields to the Node.js event loop across tokenization (`tokenizeAsync`), multi-word keyword merging (`mergeMultiWordKeywordsAsync`), statement parsing, and nested execution blocks (`BEGIN ... END`, `BEGIN TRY ... END TRY`, `IF ... ELSE`, `WHILE`). Promptly honors VS Code cancellation tokens (e.g., when continuing to type while formatting).
+- **High-Performance Architecture**: Employs precomputed multi-word patterns, zero-allocation indentation caching, bracketed identifier bypass, and direct line-range calculation in VS Code to avoid duplicate full-text buffer allocations.
 - **Customizable Casing & Style Options**: Configure keyword casing (`UPPER`, `lower`, `preserve`), identifier casing, bracketed identifiers (`[TableName]`), line wrapping lengths, clause breaks, and blank line spacing between queries.
 - **VS Code Format-on-Save Support**: Seamless integration with `editor.formatOnSave`.
 

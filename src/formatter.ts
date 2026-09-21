@@ -9,7 +9,16 @@ import {
   WITH_OPTION_KEYWORDS,
 } from './keywords';
 import { TsqlFormattingProvider, getOutputChannel } from './provider';
-import { Token, makeToken, mergeMultiWordKeywords, tokenize } from './tokenizer';
+import {
+  CancellationTokenLike,
+  Token,
+  makeToken,
+  mergeMultiWordKeywords,
+  mergeMultiWordKeywordsAsync,
+  tokenize,
+  tokenizeAsync,
+  yieldToEventLoop,
+} from './tokenizer';
 
 export type CaseOption = 'upper' | 'lower' | 'preserve';
 export type KeywordCaseOption = 'upper' | 'lower' | 'preserve';
@@ -26,12 +35,16 @@ export interface FormatterOptions {
 
 // Re-exports for backwards compatibility
 export {
+  CancellationTokenLike,
   Token,
   TsqlFormattingProvider,
   getOutputChannel,
   makeToken,
   mergeMultiWordKeywords,
+  mergeMultiWordKeywordsAsync,
   tokenize,
+  tokenizeAsync,
+  yieldToEventLoop,
 };
 
 // --- Casing helpers ---
@@ -54,8 +67,43 @@ function isKeywordLike(token: Token): boolean {
 const NON_WRAPPING_TYPES = new Set(['comma', 'cparen', 'semicolon', 'dot']);
 const INDENT_SIZE = 4;
 
-function yieldToEventLoop(): Promise<void> {
-  return new Promise((resolve) => setImmediate(resolve));
+const SPACES: string[] = [];
+for (let i = 0; i <= 128; i++) {
+  SPACES[i] = ' '.repeat(i);
+}
+export function getIndentSpaces(count: number): string {
+  if (count <= 128) return SPACES[count] ?? (SPACES[count] = ' '.repeat(count));
+  return ' '.repeat(count);
+}
+
+export class AsyncYieldController {
+  private lastYieldTime: number = performance.now();
+  private ops: number = 0;
+  private readonly opsBetweenChecks: number = 64;
+  private readonly budgetMs: number = 8;
+
+  constructor(private readonly token?: CancellationTokenLike) {}
+
+  get isCancellationRequested(): boolean {
+    return Boolean(this.token?.isCancellationRequested);
+  }
+
+  async maybeYield(): Promise<boolean> {
+    if (this.token?.isCancellationRequested) {
+      return true;
+    }
+    if (++this.ops < this.opsBetweenChecks) {
+      return false;
+    }
+    this.ops = 0;
+    const now = performance.now();
+    if (now - this.lastYieldTime >= this.budgetMs) {
+      await yieldToEventLoop();
+      this.lastYieldTime = performance.now();
+      return Boolean(this.token?.isCancellationRequested);
+    }
+    return false;
+  }
 }
 
 // --- Formatter class ---
@@ -67,16 +115,21 @@ export class SqlFormatter {
   private currentLineTouched: boolean = false;
   private indent: number = 0;
   private options: FormatterOptions;
-  private cancellationToken?: { readonly isCancellationRequested: boolean };
+  private cancellationToken?: CancellationTokenLike;
+  private yieldController?: AsyncYieldController;
 
   constructor(
     tokens: Token[],
     options: FormatterOptions,
-    cancellationToken?: { readonly isCancellationRequested: boolean },
+    cancellationToken?: CancellationTokenLike,
+    isAsync: boolean = false,
   ) {
     this.tokens = tokens;
     this.options = options;
     this.cancellationToken = cancellationToken;
+    if (isAsync) {
+      this.yieldController = new AsyncYieldController(cancellationToken);
+    }
   }
 
   format(): string {
@@ -150,7 +203,7 @@ export class SqlFormatter {
 
   private newLine(indentSpaces?: number): void {
     this.finishLine();
-    this.currentLine = ' '.repeat(indentSpaces ?? this.indent);
+    this.currentLine = getIndentSpaces(indentSpaces ?? this.indent);
     this.currentLineTouched = false;
   }
 
@@ -174,7 +227,7 @@ export class SqlFormatter {
 
   private lineAt(col: number): void {
     this.finishLine();
-    this.currentLine = ' '.repeat(col);
+    this.currentLine = getIndentSpaces(col);
     this.currentLineTouched = false;
   }
 
@@ -238,7 +291,7 @@ export class SqlFormatter {
         this.finishLine();
         this.pushBlankLineIfNeeded();
       }
-      this.currentLine = ' '.repeat(indent);
+      this.currentLine = getIndentSpaces(indent);
       this.currentLineTouched = false;
       this.emitCommentText(token.value);
 
@@ -246,7 +299,7 @@ export class SqlFormatter {
       if (isBlockComment) {
         this.pushBlankLineIfNeeded();
       }
-      this.currentLine = ' '.repeat(indent);
+      this.currentLine = getIndentSpaces(indent);
       this.currentLineTouched = false;
 
       first = false;
@@ -383,7 +436,7 @@ export class SqlFormatter {
         }
       }
       this.finishLine();
-      this.currentLine = ' '.repeat(this.indent);
+      this.currentLine = getIndentSpaces(this.indent);
       this.currentLineTouched = false;
 
       this.emitCommentRun(this.indent);
@@ -402,20 +455,13 @@ export class SqlFormatter {
   // --- Statement list formatter (asynchronous, non-blocking) ---
   private async formatStatementListAsync(insideBlock: boolean): Promise<void> {
     let first = true;
-    let lastYieldTime = performance.now();
 
     while (!this.atEnd()) {
+      if (this.yieldController) {
+        await this.yieldController.maybeYield();
+      }
       if (this.cancellationToken?.isCancellationRequested) {
         return;
-      }
-
-      // Cooperative yielding to event loop if more than 10ms have elapsed
-      if (performance.now() - lastYieldTime > 10) {
-        await yieldToEventLoop();
-        lastYieldTime = performance.now();
-        if (this.cancellationToken?.isCancellationRequested) {
-          return;
-        }
       }
 
       if (insideBlock) {
@@ -441,7 +487,7 @@ export class SqlFormatter {
         }
       }
       this.finishLine();
-      this.currentLine = ' '.repeat(this.indent);
+      this.currentLine = getIndentSpaces(this.indent);
       this.currentLineTouched = false;
 
       this.emitCommentRun(this.indent);
@@ -449,11 +495,30 @@ export class SqlFormatter {
       if (insideBlock && (this.isEndKeyword() || this.upper() === 'ELSE')) break;
 
       const posBefore = this.pos;
-      this.formatStatement();
+      await this.formatStatementAsync();
       if (this.pos === posBefore && !this.atEnd()) {
         this.emitToken(this.advance());
       }
       first = false;
+    }
+  }
+
+  // --- Statement dispatcher (asynchronous) ---
+  private async formatStatementAsync(): Promise<void> {
+    const u = this.upper();
+    switch (u) {
+      case 'BEGIN':
+        return this.formatBeginEndBlockAsync();
+      case 'BEGIN TRY':
+      case 'BEGIN CATCH':
+        return this.formatBeginTryCatchAsync();
+      case 'IF':
+        return this.formatIfAsync();
+      case 'WHILE':
+        return this.formatWhileAsync();
+      default:
+        this.formatStatement();
+        return;
     }
   }
 
@@ -1460,6 +1525,72 @@ export class SqlFormatter {
     }
   }
 
+  // --- IF statement (async) ---
+  private async formatIfAsync(): Promise<void> {
+    const stmtIndent = this.indent;
+    this.emitToken(this.advance()); // IF
+    this.emit(' ');
+
+    this.writeInlineUntil(
+      () =>
+        this.upper() === 'BEGIN' ||
+        this.upper() === 'BEGIN TRY' ||
+        (this.isStatementStart() && this.upper() !== 'SELECT') ||
+        this.atEnd(),
+    );
+
+    if (this.peek()?.type === 'comment') {
+      this.emitCommentRun(stmtIndent);
+    }
+
+    if (this.upper() === 'BEGIN') {
+      this.newLine(stmtIndent);
+      await this.formatBeginEndBlockAsync();
+    } else if (this.upper() === 'BEGIN TRY') {
+      this.newLine(stmtIndent);
+      await this.formatBeginTryCatchAsync();
+    } else {
+      this.indent = stmtIndent + INDENT_SIZE;
+      this.newLine();
+      await this.formatStatementAsync();
+      this.indent = stmtIndent;
+    }
+
+    // ELSE
+    if (this.peek()?.type === 'comment') {
+      let offset = 1;
+      while (this.peek(offset)?.type === 'comment') offset++;
+      if (this.peek(offset)?.upper === 'ELSE') {
+        this.emitCommentRun(stmtIndent);
+      }
+    }
+
+    if (this.upper() === 'ELSE') {
+      this.newLine(stmtIndent);
+      this.emitToken(this.advance()); // ELSE
+
+      if (this.peek()?.type === 'comment') {
+        this.emitCommentRun(stmtIndent);
+      }
+
+      if (this.upper() === 'IF') {
+        this.emit(' ');
+        await this.formatIfAsync();
+      } else if (this.upper() === 'BEGIN') {
+        this.newLine(stmtIndent);
+        await this.formatBeginEndBlockAsync();
+      } else if (this.upper() === 'BEGIN TRY') {
+        this.newLine(stmtIndent);
+        await this.formatBeginTryCatchAsync();
+      } else {
+        this.indent = stmtIndent + INDENT_SIZE;
+        this.newLine();
+        await this.formatStatementAsync();
+        this.indent = stmtIndent;
+      }
+    }
+  }
+
   // --- BEGIN...END block (plain) ---
   private formatBegin(): void {
     this.formatBeginEndBlock();
@@ -1471,6 +1602,21 @@ export class SqlFormatter {
 
     this.indent = blockIndent + INDENT_SIZE;
     this.formatStatementList(true);
+    this.indent = blockIndent;
+
+    if (this.upper() === 'END') {
+      this.newLine(blockIndent);
+      this.emitToken(this.advance()); // END
+    }
+  }
+
+  // --- BEGIN...END block (plain, async) ---
+  private async formatBeginEndBlockAsync(): Promise<void> {
+    const blockIndent = this.indent;
+    this.emitToken(this.advance()); // BEGIN
+
+    this.indent = blockIndent + INDENT_SIZE;
+    await this.formatStatementListAsync(true);
     this.indent = blockIndent;
 
     if (this.upper() === 'END') {
@@ -1500,6 +1646,30 @@ export class SqlFormatter {
     if (this.upper() === 'BEGIN CATCH') {
       this.newLine(blockIndent);
       this.formatBeginTryCatch();
+    }
+  }
+
+  // --- BEGIN TRY...END TRY / BEGIN CATCH...END CATCH (async) ---
+  private async formatBeginTryCatchAsync(): Promise<void> {
+    const blockIndent = this.indent;
+
+    this.emitToken(this.advance());
+
+    this.indent = blockIndent + INDENT_SIZE;
+    await this.formatStatementListAsync(true);
+    this.indent = blockIndent;
+
+    if (this.upper() === 'END TRY' || this.upper() === 'END CATCH') {
+      this.newLine(blockIndent);
+      this.emitToken(this.advance());
+    } else if (this.upper() === 'END') {
+      this.newLine(blockIndent);
+      this.emitToken(this.advance());
+    }
+
+    if (this.upper() === 'BEGIN CATCH') {
+      this.newLine(blockIndent);
+      await this.formatBeginTryCatchAsync();
     }
   }
 
@@ -1567,6 +1737,34 @@ export class SqlFormatter {
       this.indent = stmtIndent + INDENT_SIZE;
       this.newLine();
       this.formatStatement();
+      this.indent = stmtIndent;
+    }
+  }
+
+  // --- WHILE (async) ---
+  private async formatWhileAsync(): Promise<void> {
+    const stmtIndent = this.indent;
+    this.emitToken(this.advance()); // WHILE
+    this.emit(' ');
+
+    this.writeInlineUntil(
+      () =>
+        this.upper() === 'BEGIN' ||
+        (this.isStatementStart() && this.upper() !== 'SELECT') ||
+        this.atEnd(),
+    );
+
+    if (this.peek()?.type === 'comment') {
+      this.emitCommentRun(stmtIndent);
+    }
+
+    if (this.upper() === 'BEGIN') {
+      this.newLine(stmtIndent);
+      await this.formatBeginEndBlockAsync();
+    } else {
+      this.indent = stmtIndent + INDENT_SIZE;
+      this.newLine();
+      await this.formatStatementAsync();
       this.indent = stmtIndent;
     }
   }
@@ -1884,11 +2082,11 @@ export class SqlFormatter {
 }
 
 export function formatTsql(input: string, options: FormatterOptions): string {
-  const normalized = input.replace(/\r\n?/g, '\n').trim();
-  if (!normalized) {
+  if (!input || !input.trim()) {
     return input;
   }
 
+  const normalized = input.indexOf('\r') !== -1 ? input.replace(/\r\n?/g, '\n') : input;
   const rawTokens = tokenize(normalized);
   const tokens = mergeMultiWordKeywords(rawTokens);
   const formatter = new SqlFormatter(tokens, options);
@@ -1898,10 +2096,9 @@ export function formatTsql(input: string, options: FormatterOptions): string {
 export async function formatTsqlAsync(
   input: string,
   options: FormatterOptions,
-  cancellationToken?: { readonly isCancellationRequested: boolean },
+  cancellationToken?: CancellationTokenLike,
 ): Promise<string> {
-  const normalized = input.replace(/\r\n?/g, '\n').trim();
-  if (!normalized) {
+  if (!input || !input.trim()) {
     return input;
   }
 
@@ -1909,23 +2106,25 @@ export async function formatTsqlAsync(
     return input;
   }
 
-  const rawTokens = tokenize(normalized);
+  const normalized = input.indexOf('\r') !== -1 ? input.replace(/\r\n?/g, '\n') : input;
   if (cancellationToken?.isCancellationRequested) {
     return input;
   }
 
-  if (rawTokens.length > 5000) {
-    await yieldToEventLoop();
-    if (cancellationToken?.isCancellationRequested) {
-      return input;
-    }
-  }
-
-  const tokens = mergeMultiWordKeywords(rawTokens);
+  const rawTokens = await tokenizeAsync(normalized, cancellationToken);
   if (cancellationToken?.isCancellationRequested) {
     return input;
   }
 
-  const formatter = new SqlFormatter(tokens, options, cancellationToken);
-  return formatter.formatAsync();
+  const tokens = await mergeMultiWordKeywordsAsync(rawTokens, cancellationToken);
+  if (cancellationToken?.isCancellationRequested) {
+    return input;
+  }
+
+  const formatter = new SqlFormatter(tokens, options, cancellationToken, true);
+  const result = await formatter.formatAsync();
+  if (cancellationToken?.isCancellationRequested) {
+    return input;
+  }
+  return result;
 }

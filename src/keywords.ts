@@ -880,12 +880,23 @@ export const MULTI_WORD_KEYWORDS: string[][] = [
   ['BY', 'SOURCE'],
 ];
 
-export const MULTI_WORD_BY_FIRST_WORD: Map<string, string[][]> = new Map();
+export interface MultiWordPattern {
+  readonly pattern: string[];
+  readonly joinedUpper: string;
+  readonly length: number;
+}
+
+export const MULTI_WORD_BY_FIRST_WORD: Map<string, MultiWordPattern[]> = new Map();
 for (const pattern of MULTI_WORD_KEYWORDS) {
   const key = pattern[0];
+  const item: MultiWordPattern = {
+    pattern,
+    joinedUpper: pattern.join(' '),
+    length: pattern.length,
+  };
   const group = MULTI_WORD_BY_FIRST_WORD.get(key);
-  if (group) group.push(pattern);
-  else MULTI_WORD_BY_FIRST_WORD.set(key, [pattern]);
+  if (group) group.push(item);
+  else MULTI_WORD_BY_FIRST_WORD.set(key, [item]);
 }
 
 // Words that can immediately follow WITH as a procedure/function/view

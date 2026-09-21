@@ -1,11 +1,18 @@
 import type * as vscode from 'vscode';
 import { CaseOption, FormatterOptions, formatTsqlAsync, KeywordCaseOption } from './formatter';
 
+let _vscodeMod: typeof import('vscode') | null = null;
+function getVsCode(): typeof import('vscode') {
+  if (!_vscodeMod) {
+    _vscodeMod = require('vscode');
+  }
+  return _vscodeMod!;
+}
+
 let _outputChannel: vscode.OutputChannel | null = null;
 export function getOutputChannel(): vscode.OutputChannel {
   if (!_outputChannel) {
-    const vscodeMod: typeof import('vscode') = require('vscode');
-    _outputChannel = vscodeMod.window.createOutputChannel('TSQL Formatter');
+    _outputChannel = getVsCode().window.createOutputChannel('TSQL Formatter');
   }
   return _outputChannel;
 }
@@ -18,11 +25,10 @@ export class TsqlFormattingProvider
     _options?: vscode.FormattingOptions,
     token?: vscode.CancellationToken,
   ): Promise<vscode.TextEdit[]> {
-    const vscodeMod: typeof import('vscode') = require('vscode');
-    const fullRange = new vscodeMod.Range(
-      document.positionAt(0),
-      document.positionAt(document.getText().length),
-    );
+    const vscodeMod = getVsCode();
+    const lastLineIndex = Math.max(0, document.lineCount - 1);
+    const lastLine = document.lineAt(lastLineIndex);
+    const fullRange = new vscodeMod.Range(new vscodeMod.Position(0, 0), lastLine.range.end);
     return this.provideFormattingEdits(document, fullRange, token);
   }
 
@@ -43,7 +49,7 @@ export class TsqlFormattingProvider
     range: vscode.Range,
     token?: vscode.CancellationToken,
   ): Promise<vscode.TextEdit[]> {
-    const vscodeMod: typeof import('vscode') = require('vscode');
+    const vscodeMod = getVsCode();
     const config = vscodeMod.workspace.getConfiguration('tsqlFormatter');
     const options: FormatterOptions = {
       breakOnKeywords: config.get<boolean>('breakOnKeywords', true),
