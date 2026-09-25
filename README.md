@@ -1,8 +1,8 @@
-# Clean T-SQL Formatter
+# <img src="icon.png" alt="Clean T-SQL Formatter Icon" width="42" height="42" align="top" /> Clean T-SQL Formatter
 
 A high-performance Visual Studio Code extension for formatting Microsoft T-SQL (Transact-SQL) code consistently and cleanly.
 
-- [Clean T-SQL Formatter](#clean-t-sql-formatter)
+- [Clean T-SQL Formatter](#-clean-t-sql-formatter)
   - [Install](#install)
   - [Features](#features)
   - [Comment Formatting Rules](#comment-formatting-rules)
@@ -12,6 +12,7 @@ A high-performance Visual Studio Code extension for formatting Microsoft T-SQL (
   - [Settings](#settings)
   - [Examples](#examples)
     - [Basic Query](#basic-query)
+    - [Multi-Row `INSERT ... VALUES` \& Table Value Constructors](#multi-row-insert--values--table-value-constructors)
     - [Subqueries, CTEs \& Table-Valued Functions](#subqueries-ctes--table-valued-functions)
     - [MERGE Statement](#merge-statement)
     - [Comment Formatting](#comment-formatting)
@@ -38,13 +39,14 @@ The extension activates automatically when you open a `.sql` file.
 ## Features
 
 - **Full T-SQL Statement Coverage**:
-  - **DML**: `SELECT`, `INSERT`, `UPDATE`, `DELETE`, and full clause formatting for `MERGE` (`USING`, `ON`, `WHEN MATCHED THEN`, `WHEN NOT MATCHED [BY TARGET|BY SOURCE] THEN`, `OUTPUT`).
-  - **Table Sources & Joins**: Supports standard joins (`INNER`, `LEFT`, `RIGHT`, `FULL`, `CROSS`), `CROSS APPLY` / `OUTER APPLY`, ANSI comma joins (`FROM t1, t2`), `PIVOT` and `UNPIVOT`, `TABLESAMPLE`, and table hints (`WITH (NOLOCK)`).
+  - **DML**: `SELECT`, `INSERT` / `INSERT INTO` (including cleanly aligned single-row and multi-row `VALUES` lists, `INSERT ... SELECT`, and `INSERT ... EXEC`), `UPDATE`, `DELETE`, and full clause formatting for `MERGE` (`USING`, `ON`, `WHEN MATCHED THEN`, `WHEN NOT MATCHED [BY TARGET|BY SOURCE] THEN`, `OUTPUT`).
+  - **Table Sources & Joins**: Supports standard joins (`INNER`, `LEFT`, `RIGHT`, `FULL`, `CROSS`), `CROSS APPLY` / `OUTER APPLY`, derived table value constructors (`FROM (VALUES (...), (...)) AS t(cols)`), ANSI comma joins (`FROM t1, t2`), `PIVOT` and `UNPIVOT`, `TABLESAMPLE`, and table hints (`WITH (NOLOCK)`).
   - **Table-Valued & Rowset Functions**: Native support for built-in and user-defined TVFs (`STRING_SPLIT`, `GENERATE_SERIES`, `OPENJSON`, `OPENROWSET`, `OPENQUERY`, `OPENDATASOURCE`, `OPENXML`, `dbo.fn_GetUsers(...)`) in `FROM` and `JOIN` clauses.
   - **DDL**: `CREATE TABLE` (column constraints, `IDENTITY(seed, increment)`, computed columns), `CREATE OR ALTER PROCEDURE / VIEW / FUNCTION`, `DROP TABLE IF EXISTS` (and all object variants), `ALTER TABLE` (including `ALTER COLUMN`, `ADD CONSTRAINT`, `DROP CONSTRAINT`), and `CREATE INDEX` (with `INCLUDE`, `WHERE`, and `WITH (...)` index options).
   - **Expressions & Control Flow**: CTEs (`WITH ... AS`), subqueries, `CASE` expressions, window functions (`OVER`, `PARTITION BY`, `ROWS/RANGE/GROUPS`, `WINDOW`), `IF ... ELSE`, `BEGIN ... END`, `BEGIN TRY ... END CATCH`, transactions (`BEGIN TRAN`, `SAVE TRAN`, `COMMIT WORK`), cursors, and `GO` batches.
   - **Modern T-SQL & Vector Extensions**: SQL Server 2022 & 2025 vector data types and functions (`VECTOR(1536)`, `VECTOR_DISTANCE`, `VECTOR_NORM`), `DATETRUNC`, `DATE_BUCKET`, `JSON_PATH_EXISTS`, and `APPROX_COUNT_DISTINCT`.
   - **Robust Lexing**: Supports Unicode / international identifiers (`código`, `preço`), compound assignment operators (`+=`, `-=`, `*=`, `/=`, `%=`, `&=`, `^=`, `|=`), HierarchyID / CLR scope resolution operator (`::`), hexadecimal literals (`0x...`), scientific notation (`1e5`), nested block comments (`/* ... /* ... */ ... */`), and bracketed identifiers with escaped brackets (`[Table]]Name]`).
+- **Consistent Multi-Row `VALUES` & Line Wrapping**: Places `VALUES` on its own line and aligns every row tuple `( ... )` at the same indentation level beneath `VALUES` (even across 100+ rows). Long lines that wrap multiple times via `maxLineLength` maintain a steady continuation indent relative to the statement's base indent without stair-stepping.
 - **Strict & Clean Comment Formatting**: Preserves single-line (`--`) and multi-line (`/* */`) comments, formatting comment runs with precise spacing rules.
 - **Document & Selection Formatting**: Format an entire SQL document or format only the selected SQL statements.
 - **Asynchronous, Non-Blocking Pipeline**: Formats large documents and complex batches without freezing the VS Code editor UI. Cooperatively yields to the Node.js event loop across tokenization (`tokenizeAsync`), multi-word keyword merging (`mergeMultiWordKeywordsAsync`), statement parsing, and nested execution blocks (`BEGIN ... END`, `BEGIN TRY ... END TRY`, `IF ... ELSE`, `WHILE`). Promptly honors VS Code cancellation tokens (e.g., when continuing to type while formatting).
@@ -104,7 +106,7 @@ Customize extension behavior in VS Code Settings (`Ctrl+,` or `Cmd+,`) by search
 | `tsqlFormatter.useBrackets`         | `boolean` | `false`      | Wrap table/column identifiers in square brackets (e.g., `[TableName]`). Variables (`@var`, `@@sysvar`) and temp tables (`#temp`, `##global`) are **never** bracketed. |
 | `tsqlFormatter.linesBetweenQueries` | `number`  | `2`          | Number of empty lines between top-level SQL statements.                                                                                                               |
 | `tsqlFormatter.useMaxLineLength`    | `boolean` | `true`       | Enable line length wrapping.                                                                                                                                          |
-| `tsqlFormatter.maxLineLength`       | `number`  | `100`        | Maximum line length before wrapping long expressions onto indented continuation lines.                                                                                |
+| `tsqlFormatter.maxLineLength`       | `number`  | `100`        | Maximum line length before wrapping long expressions onto consistently indented continuation lines.                                                                   |
 
 Example `.vscode/settings.json`:
 
@@ -140,6 +142,38 @@ FROM dbo.users
 WHERE is_active = 1
   AND created_at >= '2025-01-01'
 ORDER BY name;
+```
+
+---
+
+### Multi-Row `INSERT ... VALUES` & Table Value Constructors
+
+**Before:**
+
+```sql
+insert into dbo.Users (id, username, email) values (1, 'alice', 'alice@example.com'), (2, 'bob', 'bob@example.com'), (3, 'charlie', 'charlie@example.com');
+```
+
+**After:**
+
+```sql
+INSERT INTO dbo.Users (id, username, email)
+VALUES
+    (1, 'alice', 'alice@example.com'),
+    (2, 'bob', 'bob@example.com'),
+    (3, 'charlie', 'charlie@example.com');
+```
+
+Derived `(VALUES ...)` table value constructors in `FROM` / `APPLY` clauses are formatted with the same row alignment:
+
+```sql
+SELECT
+    *
+FROM (
+    VALUES
+        (1, 'A'),
+        (2, 'B')
+) AS t(id, code);
 ```
 
 ---
@@ -287,6 +321,16 @@ END;
 ---
 
 ## Development & Contributing
+
+### Project Structure
+
+- `src/extension.ts` — VS Code extension activation and formatting provider registration.
+- `src/provider.ts` — `DocumentFormattingEditProvider` and `DocumentRangeFormattingEditProvider` implementation, configuration loading, and output logging.
+- `src/formatter.ts` — Synchronous (`formatTsql`) and asynchronous (`formatTsqlAsync`) SQL formatting engine (`SqlFormatter`).
+- `src/tokenizer.ts` — Lexer (`tokenize`, `tokenizeAsync`) and greedy multi-word keyword combiner (`mergeMultiWordKeywords`, `mergeMultiWordKeywordsAsync`).
+- `src/keywords.ts` — T-SQL reserved keywords, multi-word keyword trie definitions, built-in functions, and parameterized data types.
+
+### Build & Test
 
 To build and run tests locally:
 
