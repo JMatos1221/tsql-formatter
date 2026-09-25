@@ -113,6 +113,7 @@ export class SqlFormatter {
   private lines: string[] = [];
   private currentLine: string = '';
   private currentLineTouched: boolean = false;
+  private currentLineBaseIndent: number = 0;
   private indent: number = 0;
   private options: FormatterOptions;
   private cancellationToken?: CancellationTokenLike;
@@ -203,7 +204,9 @@ export class SqlFormatter {
 
   private newLine(indentSpaces?: number): void {
     this.finishLine();
-    this.currentLine = getIndentSpaces(indentSpaces ?? this.indent);
+    const targetIndent = indentSpaces ?? this.indent;
+    this.currentLineBaseIndent = targetIndent;
+    this.currentLine = getIndentSpaces(targetIndent);
     this.currentLineTouched = false;
   }
 
@@ -227,6 +230,7 @@ export class SqlFormatter {
 
   private lineAt(col: number): void {
     this.finishLine();
+    this.currentLineBaseIndent = col;
     this.currentLine = getIndentSpaces(col);
     this.currentLineTouched = false;
   }
@@ -241,8 +245,9 @@ export class SqlFormatter {
     if (this.currentLine.endsWith(' ')) {
       this.currentLine = this.currentLine.slice(0, -1);
     }
-    const lineIndent = this.currentLine.length - this.currentLine.trimStart().length;
-    this.newLine(lineIndent + INDENT_SIZE);
+    const baseIndent = this.currentLineBaseIndent;
+    this.newLine(baseIndent + INDENT_SIZE);
+    this.currentLineBaseIndent = baseIndent;
   }
 
   // --- Casing ---
@@ -291,6 +296,7 @@ export class SqlFormatter {
         this.finishLine();
         this.pushBlankLineIfNeeded();
       }
+      this.currentLineBaseIndent = indent;
       this.currentLine = getIndentSpaces(indent);
       this.currentLineTouched = false;
       this.emitCommentText(token.value);
@@ -299,6 +305,7 @@ export class SqlFormatter {
       if (isBlockComment) {
         this.pushBlankLineIfNeeded();
       }
+      this.currentLineBaseIndent = indent;
       this.currentLine = getIndentSpaces(indent);
       this.currentLineTouched = false;
 
@@ -406,7 +413,7 @@ export class SqlFormatter {
     while (this.peek(offset)?.type === 'comment') offset++;
     const inner = this.peek(offset);
     if (!inner || inner.type !== 'word') return false;
-    return inner.upper === 'SELECT';
+    return inner.upper === 'SELECT' || inner.upper === 'VALUES';
   }
 
   // --- Statement list formatter (synchronous) ---
@@ -436,6 +443,7 @@ export class SqlFormatter {
         }
       }
       this.finishLine();
+      this.currentLineBaseIndent = this.indent;
       this.currentLine = getIndentSpaces(this.indent);
       this.currentLineTouched = false;
 
@@ -487,6 +495,7 @@ export class SqlFormatter {
         }
       }
       this.finishLine();
+      this.currentLineBaseIndent = this.indent;
       this.currentLine = getIndentSpaces(this.indent);
       this.currentLineTouched = false;
 
@@ -754,7 +763,10 @@ export class SqlFormatter {
     }
 
     this.writeInlineUntil(
-      () => this.isWordAt(0, 'VALUES', 'SELECT', 'EXEC', 'EXECUTE') || this.isStatementStart(),
+      () =>
+        (this.upper() === 'VALUES' && this.peek(-1)?.upper !== 'DEFAULT') ||
+        this.isWordAt(0, 'SELECT', 'EXEC', 'EXECUTE') ||
+        this.isStatementStart(),
     );
 
     if (this.peek()?.type === 'comment') {
@@ -764,12 +776,64 @@ export class SqlFormatter {
     if (this.upper() === 'VALUES') {
       this.newLine(stmtIndent);
       this.emitToken(this.advance()); // VALUES
-      this.emit(' ');
-      this.writeInlineUntil(() => this.isStatementStart());
+      this.formatValuesRows(stmtIndent);
     } else if (this.upper() === 'SELECT') {
       this.newLine(stmtIndent);
       this.formatSelectQuery(stmtIndent);
+    } else if (this.isWordAt(0, 'EXEC', 'EXECUTE')) {
+      this.newLine(stmtIndent);
+      this.formatExec();
     }
+  }
+
+  private formatValuesRows(stmtIndent: number): void {
+    const rowIndent = stmtIndent + INDENT_SIZE;
+
+    while (!this.atEnd()) {
+      if (this.isStatementStart() || this.isEndKeyword() || this.isClauseKeyword()) break;
+      if (this.peek()?.type === 'semicolon' || this.peek()?.type === 'cparen') break;
+
+      if (this.peek()?.type === 'comment') {
+        this.emitCommentRun(rowIndent);
+        continue;
+      }
+
+      if (this.isStatementStart() || this.isEndKeyword() || this.isClauseKeyword()) break;
+      if (this.peek()?.type === 'semicolon' || this.peek()?.type === 'cparen') break;
+
+      this.newLine(rowIndent);
+      this.writeInlineUntil(() => {
+        if (this.peek()?.type === 'comma') return true;
+        if (this.peek()?.type === 'semicolon') return true;
+        if (this.peek()?.type === 'cparen') return true;
+        if (this.isClauseKeyword()) return true;
+        if (this.isStatementStart()) return true;
+        if (this.isEndKeyword()) return true;
+        return false;
+      });
+
+      if (this.peek()?.type === 'comma') {
+        this.emit(',');
+        this.advance();
+        if (this.peek()?.type === 'comment' && !this.peek()!.hasPrecedingNewline) {
+          this.emit(' ');
+          this.emitCommentText(this.advance().value);
+        }
+        continue;
+      }
+
+      if (this.peek()?.type === 'semicolon') {
+        this.emit(';');
+        this.advance();
+        if (this.peek()?.type === 'comment' && !this.peek()!.hasPrecedingNewline) {
+          this.emit(' ');
+          this.emitCommentText(this.advance().value);
+        }
+        break;
+      }
+    }
+
+    this.formatOptionalClauses(stmtIndent);
   }
 
   // --- UPDATE ---
@@ -1862,6 +1926,9 @@ export class SqlFormatter {
           this.emit(' ');
           this.emitToken(this.advance()); // alias
         }
+        if (this.peek()?.type === 'oparen' && !this.isSubqueryStart()) {
+          this.writeInlineParens();
+        }
       }
       return;
     }
@@ -2034,6 +2101,9 @@ export class SqlFormatter {
     this.emitCommentRun(subIndent);
     if (this.upper() === 'SELECT') {
       this.formatSelectQuery(subIndent);
+    } else if (this.upper() === 'VALUES') {
+      this.emitToken(this.advance()); // VALUES
+      this.formatValuesRows(subIndent);
     }
     if (this.peek()?.type === 'comment') {
       this.emitCommentRun(subIndent);

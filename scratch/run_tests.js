@@ -293,6 +293,48 @@ test('Bitwise NOT ~ without space before operand', () => {
   assert.strictEqual(result, expected);
 });
 
+test('Single-row INSERT INTO ... VALUES places row on new line indented beneath VALUES', () => {
+  const input = `insert into dbo.Users (id, name) values (1, 'Alice');`;
+  const result = formatTsql(input, defaultOptions);
+  const expected = `INSERT INTO dbo.Users (id, name)\nVALUES\n    (1, 'Alice');\n`;
+  assert.strictEqual(result, expected);
+});
+
+test('Multi-row INSERT INTO ... VALUES aligns all rows at the same indent level', () => {
+  const input = `insert into dbo.Users (id, name) values (1, 'Alice'), (2, 'Bob'), (3, 'Charlie');`;
+  const result = formatTsql(input, defaultOptions);
+  const expected = `INSERT INTO dbo.Users (id, name)\nVALUES\n    (1, 'Alice'),\n    (2, 'Bob'),\n    (3, 'Charlie');\n`;
+  assert.strictEqual(result, expected);
+});
+
+test('Multi-row INSERT INTO ... VALUES with 100 rows aligns every row at 4 spaces (no staircase indent)', () => {
+  const rows = Array.from(
+    { length: 100 },
+    (_, i) => `(${i + 1}, 'User_${i + 1}', 'user${i + 1}@example.com')`,
+  );
+  const input = `INSERT INTO dbo.Users (id, username, email) VALUES ${rows.join(', ')};`;
+  const result = formatTsql(input, defaultOptions);
+  const lines = result.trimEnd().split('\n');
+  assert.strictEqual(lines[0], 'INSERT INTO dbo.Users (id, username, email)');
+  assert.strictEqual(lines[1], 'VALUES');
+  assert.strictEqual(lines.length, 102);
+  for (let i = 0; i < 100; i++) {
+    const suffix = i < 99 ? ',' : ';';
+    assert.strictEqual(
+      lines[i + 2],
+      `    (${i + 1}, 'User_${i + 1}', 'user${i + 1}@example.com')${suffix}`,
+      `Row ${i + 1} should be indented by exactly 4 spaces`,
+    );
+  }
+});
+
+test('Derived table (VALUES ...) in FROM clause aligns rows consistently', () => {
+  const input = `select * from (values (1, 'A'), (2, 'B')) as t(id, code);`;
+  const result = formatTsql(input, defaultOptions);
+  const expected = `SELECT\n    *\nFROM (\n    VALUES\n        (1, 'A'),\n        (2, 'B')\n) AS t(id, code);\n`;
+  assert.strictEqual(result, expected);
+});
+
 if (process.exitCode === 1) {
   console.error('\nSome tests failed.');
   process.exit(1);
