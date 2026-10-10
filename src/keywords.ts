@@ -758,7 +758,7 @@ export const TYPES_WITH_PARAMS = new Set([
 ]);
 
 // Multi-word keywords: longest patterns first for greedy matching
-export const MULTI_WORD_KEYWORDS: string[][] = [
+const MULTI_WORD_KEYWORDS: string[][] = [
   // 4-word
   ['DROP', 'TABLE', 'IF', 'EXISTS'],
   ['DROP', 'PROCEDURE', 'IF', 'EXISTS'],

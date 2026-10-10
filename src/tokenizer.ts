@@ -52,15 +52,15 @@ export function makeToken(type: Token['type'], value: string, hasPrecedingNewlin
 }
 
 // Character classification by char code
-export function isWhitespaceCode(c: number): boolean {
+function isWhitespaceCode(c: number): boolean {
   return c === 32 || (c >= 9 && c <= 13) || c === 160; // space, \t \n \v \f \r, nbsp
 }
 
-export function isDigitCode(c: number): boolean {
+function isDigitCode(c: number): boolean {
   return c >= 48 && c <= 57; // 0-9
 }
 
-export function isWordStartCode(c: number): boolean {
+function isWordStartCode(c: number): boolean {
   return (
     (c >= 65 && c <= 90) || // A-Z
     (c >= 97 && c <= 122) || // a-z
@@ -72,7 +72,7 @@ export function isWordStartCode(c: number): boolean {
   );
 }
 
-export function isWordCharCode(c: number): boolean {
+function isWordCharCode(c: number): boolean {
   return (
     (c >= 65 && c <= 90) || // A-Z
     (c >= 97 && c <= 122) || // a-z

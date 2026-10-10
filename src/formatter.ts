@@ -34,18 +34,7 @@ export interface FormatterOptions {
 }
 
 // Re-exports for backwards compatibility
-export {
-  CancellationTokenLike,
-  Token,
-  TsqlFormattingProvider,
-  getOutputChannel,
-  makeToken,
-  mergeMultiWordKeywords,
-  mergeMultiWordKeywordsAsync,
-  tokenize,
-  tokenizeAsync,
-  yieldToEventLoop,
-};
+export { CancellationTokenLike };
 
 // --- Casing helpers ---
 function applyCase(value: string, option: string): string {
@@ -71,12 +60,12 @@ const SPACES: string[] = [];
 for (let i = 0; i <= 128; i++) {
   SPACES[i] = ' '.repeat(i);
 }
-export function getIndentSpaces(count: number): string {
+function getIndentSpaces(count: number): string {
   if (count <= 128) return SPACES[count] ?? (SPACES[count] = ' '.repeat(count));
   return ' '.repeat(count);
 }
 
-export class AsyncYieldController {
+class AsyncYieldController {
   private lastYieldTime: number = performance.now();
   private ops: number = 0;
   private readonly opsBetweenChecks: number = 64;
@@ -107,7 +96,7 @@ export class AsyncYieldController {
 }
 
 // --- Formatter class ---
-export class SqlFormatter {
+class SqlFormatter {
   private tokens: Token[];
   private pos: number = 0;
   private lines: string[] = [];
