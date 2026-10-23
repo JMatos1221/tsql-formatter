@@ -61,14 +61,12 @@ The extension activates automatically when you open a `.sql` file.
 Clean T-SQL Formatter enforces consistent whitespace rules for comments to ensure high readability:
 
 - **Single-Line Comments (`--`)**:
-  - Inserted with a blank line **before** the comment (or the first comment in a sequential run), unless it is at the very beginning of the document or already preceded by a blank line.
+  - Always placed on their own line (never sharing a line with SQL code) with a blank line **before** the comment (or the first comment in a sequential run), unless it is at the very beginning of the document or already preceded by a blank line.
   - Sequential `--` comments are kept on consecutive lines without blank lines in between.
-  - **No blank line after** single-line comments — the last comment in a run sits directly above the line of code it describes.
+  - **No blank line after** single-line comments — the last comment in a run stands directly above the line of code it describes.
 - **Multi-Line / Block Comments (`/* ... */`)**:
-  - Always formatted with a blank line **before** and a blank line **after** the block comment.
+  - Always formatted with a blank line **before** the block comment, and the following line of code is placed **directly after** the closing `*/` line (no blank line after).
   - Correctly tracks nested block comments (`/* outer /* inner */ still comment */`).
-- **Inline Comments**:
-  - Trailing comments at the end of a code line (e.g., `id, -- primary key`) are preserved on that line with appropriate spacing.
 
 ---
 
@@ -98,15 +96,16 @@ Select one or more complete T-SQL statements, right-click, and select **Format S
 
 Customize extension behavior in VS Code Settings (`Ctrl+,` or `Cmd+,`) by searching for `tsqlFormatter`:
 
-| Setting                             | Type      | Default      | Description                                                                                                                                                           |
-| :---------------------------------- | :-------- | :----------- | :-------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `tsqlFormatter.breakOnKeywords`     | `boolean` | `true`       | Break into a new line for keywords like `WHERE`, `JOIN`, `AND`, `OR`.                                                                                                 |
-| `tsqlFormatter.keywordCase`         | `string`  | `"preserve"` | Keyword casing mode (`"upper"`, `"lower"`, or `"preserve"`).                                                                                                          |
-| `tsqlFormatter.identifierCase`      | `string`  | `"preserve"` | Identifier casing mode for database/schema/table/column names (`"upper"`, `"lower"`, or `"preserve"`).                                                                |
-| `tsqlFormatter.useBrackets`         | `boolean` | `false`      | Wrap table/column identifiers in square brackets (e.g., `[TableName]`). Variables (`@var`, `@@sysvar`) and temp tables (`#temp`, `##global`) are **never** bracketed. |
-| `tsqlFormatter.linesBetweenQueries` | `number`  | `2`          | Number of empty lines between top-level SQL statements.                                                                                                               |
-| `tsqlFormatter.useMaxLineLength`    | `boolean` | `true`       | Enable line length wrapping.                                                                                                                                          |
-| `tsqlFormatter.maxLineLength`       | `number`  | `100`        | Maximum line length before wrapping long expressions onto consistently indented continuation lines.                                                                   |
+| Setting                               | Type      | Default      | Description                                                                                                                                                           |
+| :------------------------------------ | :-------- | :----------- | :-------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `tsqlFormatter.breakOnKeywords`       | `boolean` | `true`       | Break into a new line for keywords like `WHERE`, `JOIN`, `AND`, `OR`.                                                                                                 |
+| `tsqlFormatter.keywordCase`           | `string`  | `"preserve"` | Keyword casing mode (`"upper"`, `"lower"`, or `"preserve"`).                                                                                                          |
+| `tsqlFormatter.identifierCase`        | `string`  | `"preserve"` | Identifier casing mode for database/schema/table/column names (`"upper"`, `"lower"`, or `"preserve"`).                                                                |
+| `tsqlFormatter.useBrackets`           | `boolean` | `false`      | Wrap table/column identifiers in square brackets (e.g., `[TableName]`). Variables (`@var`, `@@sysvar`) and temp tables (`#temp`, `##global`) are **never** bracketed. |
+| `tsqlFormatter.linesBetweenQueries`   | `number`  | `2`          | Number of empty lines between top-level SQL statements.                                                                                                               |
+| `tsqlFormatter.linesBetweenVariables` | `number`  | `0`          | Number of empty lines between consecutive variable declarations (`DECLARE`) or assignments (`SET @var = ...`).                                                        |
+| `tsqlFormatter.useMaxLineLength`      | `boolean` | `true`       | Enable line length wrapping.                                                                                                                                          |
+| `tsqlFormatter.maxLineLength`         | `number`  | `100`        | Maximum line length before wrapping long expressions onto consistently indented continuation lines.                                                                   |
 
 Example `.vscode/settings.json`:
 
@@ -115,7 +114,8 @@ Example `.vscode/settings.json`:
   "tsqlFormatter.keywordCase": "upper",
   "tsqlFormatter.identifierCase": "preserve",
   "tsqlFormatter.useBrackets": false,
-  "tsqlFormatter.linesBetweenQueries": 2
+  "tsqlFormatter.linesBetweenQueries": 2,
+  "tsqlFormatter.linesBetweenVariables": 0
 }
 ```
 
@@ -253,7 +253,6 @@ SELECT
 FROM users;
 
 /* block comment */
-
 SELECT
     2;
 ```

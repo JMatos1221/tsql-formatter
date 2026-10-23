@@ -40,10 +40,10 @@ test('Sequential single-line comments: grouped together, blank line before first
 });
 
 // 2. Block Comment Rules
-test('Multi-line block comment: blank line before AND after', () => {
+test('Multi-line block comment: blank line before, code line directly after', () => {
   const input = `SELECT 1;\n/* block comment */\nSELECT 2;`;
   const result = formatTsql(input, defaultOptions);
-  const expected = `SELECT\n    1;\n\n/* block comment */\n\nSELECT\n    2;\n`;
+  const expected = `SELECT\n    1;\n\n/* block comment */\nSELECT\n    2;\n`;
   assert.strictEqual(result, expected);
 });
 
@@ -122,10 +122,10 @@ test('User Goal: Single-line comments sequential with statement on next line', (
   assert.strictEqual(result, expected);
 });
 
-test('User Goal: Multi-line block comment has blank line before and after', () => {
+test('User Goal: Multi-line block comment has blank line before and code directly after closing line', () => {
   const input = `select 1;\n\n/*\nmany\nlines\ncomment\n*/\n\nselect 2;`;
   const result = formatTsql(input, defaultOptions);
-  const expected = `SELECT\n    1;\n\n/*\nmany\nlines\ncomment\n*/\n\nSELECT\n    2;\n`;
+  const expected = `SELECT\n    1;\n\n/*\nmany\nlines\ncomment\n*/\nSELECT\n    2;\n`;
   assert.strictEqual(result, expected);
 });
 
@@ -143,10 +143,10 @@ test('Comments inside IF/ELSE blocks', () => {
   assert.strictEqual(result, expected);
 });
 
-test('Inline trailing comment vs standalone line comment', () => {
+test('Inline trailing comment moved to its own line with standalone comment', () => {
   const input = `SELECT id, name -- inline comment\n-- standalone comment\nFROM users;`;
   const result = formatTsql(input, defaultOptions);
-  const expected = `SELECT\n    id,\n    name -- inline comment\n\n    -- standalone comment\nFROM users;\n`;
+  const expected = `SELECT\n    id,\n    name\n\n-- inline comment\n-- standalone comment\nFROM users;\n`;
   assert.strictEqual(result, expected);
 });
 
@@ -193,7 +193,7 @@ test('Hexadecimal constants: 0x... preserved without splitting', () => {
 test('Compound assignment operators: +=, -=, *=, /= preserved as single tokens', () => {
   const input = `set @i += 1; set @x -= 2;`;
   const result = formatTsql(input, defaultOptions);
-  const expected = `SET @i += 1;\n\n\nSET @x -= 2;\n`;
+  const expected = `SET @i += 1;\nSET @x -= 2;\n`;
   assert.strictEqual(result, expected);
 });
 
@@ -214,7 +214,7 @@ test('Unicode / international identifier support', () => {
 test('Nested block comments correctly tracked', () => {
   const input = `/* outer /* inner */ still comment */ select 1;`;
   const result = formatTsql(input, defaultOptions);
-  const expected = `/* outer /* inner */ still comment */\n\nSELECT\n    1;\n`;
+  const expected = `/* outer /* inner */ still comment */\nSELECT\n    1;\n`;
   assert.strictEqual(result, expected);
 });
 
@@ -332,6 +332,91 @@ test('Derived table (VALUES ...) in FROM clause aligns rows consistently', () =>
   const input = `select * from (values (1, 'A'), (2, 'B')) as t(id, code);`;
   const result = formatTsql(input, defaultOptions);
   const expected = `SELECT\n    *\nFROM (\n    VALUES\n        (1, 'A'),\n        (2, 'B')\n) AS t(id, code);\n`;
+  assert.strictEqual(result, expected);
+});
+
+// 8. IF NOT EXISTS / >2 Keywords Together, linesBetweenVariables & Comment Rules
+test('IF NOT EXISTS with subquery and INNER JOIN ... ON ... and useBrackets: true', () => {
+  const opts = { ...defaultOptions, useBrackets: true };
+  const input = `if not exists (select 1 from dbo.Users u inner join dbo.Roles r on u.role_id = r.id where u.active = 1) begin insert into dbo.Users (name) values ('Admin'); end else if exists (select 1 from dbo.Users) select 1;`;
+  const result = formatTsql(input, opts);
+  const expected = [
+    'IF NOT EXISTS (',
+    '    SELECT',
+    '        1',
+    '    FROM [dbo].[Users] [u]',
+    '    INNER JOIN [dbo].[Roles] [r]',
+    '        ON [u].[role_id] = [r].[id]',
+    '    WHERE [u].[active] = 1',
+    ')',
+    'BEGIN',
+    '    INSERT INTO [dbo].[Users] ([name])',
+    '    VALUES',
+    "        ('Admin');",
+    'END',
+    'ELSE IF EXISTS (',
+    '    SELECT',
+    '        1',
+    '    FROM [dbo].[Users]',
+    ')',
+    '    SELECT',
+    '        1;',
+    '',
+  ].join('\n');
+  assert.strictEqual(result, expected);
+});
+
+test('IF NOT (@a = 1) and IF NOT EXISTS with lower and preserve keywordCase and useBrackets: true', () => {
+  const optsLower = { ...defaultOptions, keywordCase: 'lower', useBrackets: true };
+  const input1 = `IF NOT (@a = 1) SELECT id FROM users;`;
+  const result1 = formatTsql(input1, optsLower);
+  const expected1 = `if not (@a = 1)\n    select\n        [id]\n    from [users];\n`;
+  assert.strictEqual(result1, expected1);
+
+  const optsPreserve = { ...defaultOptions, keywordCase: 'preserve', useBrackets: true };
+  const input2 = `If Not Exists (Select 1 From dbo.Users u Inner Hash Join dbo.Roles r On u.role_id Is Not Distinct From r.id) Select 1;`;
+  const result2 = formatTsql(input2, optsPreserve);
+  const expected2 = [
+    'If Not Exists (',
+    '    Select',
+    '        1',
+    '    From [dbo].[Users] [u]',
+    '    Inner Hash Join [dbo].[Roles] [r]',
+    '        On [u].[role_id] Is Not Distinct From [r].[id]',
+    ')',
+    '    Select',
+    '        1;',
+    '',
+  ].join('\n');
+  assert.strictEqual(result2, expected2);
+});
+
+test('linesBetweenVariables: consecutive DECLARE and SET @var have 0 blank lines by default, customizable (1 and 2)', () => {
+  const input = `DECLARE @a INT = 1;\nDECLARE @b INT = 2;\nSET @a = 10;\nSET @b = 20;\nSELECT @a, @b;`;
+  const resDefault = formatTsql(input, defaultOptions);
+  const expectedDefault = `DECLARE @a INT = 1;\nDECLARE @b INT = 2;\nSET @a = 10;\nSET @b = 20;\n\n\nSELECT\n    @a,\n    @b;\n`;
+  assert.strictEqual(resDefault, expectedDefault);
+
+  const resOneBlank = formatTsql(input, { ...defaultOptions, linesBetweenVariables: 1 });
+  const expectedOneBlank = `DECLARE @a INT = 1;\n\nDECLARE @b INT = 2;\n\nSET @a = 10;\n\nSET @b = 20;\n\n\nSELECT\n    @a,\n    @b;\n`;
+  assert.strictEqual(resOneBlank, expectedOneBlank);
+
+  const resTwoBlanks = formatTsql(input, { ...defaultOptions, linesBetweenVariables: 2 });
+  const expectedTwoBlanks = `DECLARE @a INT = 1;\n\n\nDECLARE @b INT = 2;\n\n\nSET @a = 10;\n\n\nSET @b = 20;\n\n\nSELECT\n    @a,\n    @b;\n`;
+  assert.strictEqual(resTwoBlanks, expectedTwoBlanks);
+});
+
+test('Inline single-line comment after statement moved to standalone line with blank line before', () => {
+  const input = `DECLARE @a INT = 1; -- initialize a\nDECLARE @b INT = 2;`;
+  const result = formatTsql(input, defaultOptions);
+  const expected = `DECLARE @a INT = 1;\n\n-- initialize a\nDECLARE @b INT = 2;\n`;
+  assert.strictEqual(result, expected);
+});
+
+test('Comment inside GROUP BY comma-separated clause stays within the clause', () => {
+  const input = `SELECT a, b FROM dbo.T GROUP BY a -- comment\n, b;`;
+  const result = formatTsql(input, defaultOptions);
+  const expected = `SELECT\n    a,\n    b\nFROM dbo.T\nGROUP BY a\n\n-- comment\n, b;\n`;
   assert.strictEqual(result, expected);
 });
 

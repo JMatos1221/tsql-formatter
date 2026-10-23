@@ -56,6 +56,7 @@ export class TsqlFormattingProvider
       identifierCase: config.get<CaseOption>('identifierCase', 'preserve'),
       keywordCase: config.get<KeywordCaseOption>('keywordCase', 'preserve'),
       linesBetweenQueries: Math.max(0, config.get<number>('linesBetweenQueries', 2)),
+      linesBetweenVariables: Math.max(0, config.get<number>('linesBetweenVariables', 0)),
       maxLineLength: Math.max(20, config.get<number>('maxLineLength', 100)),
       useBrackets: config.get<boolean>('useBrackets', false),
       useMaxLineLength: config.get<boolean>('useMaxLineLength', true),

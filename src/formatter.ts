@@ -8,7 +8,6 @@ import {
   TYPES_WITH_PARAMS,
   WITH_OPTION_KEYWORDS,
 } from './keywords';
-import { TsqlFormattingProvider, getOutputChannel } from './provider';
 import {
   CancellationTokenLike,
   Token,
@@ -28,6 +27,7 @@ export interface FormatterOptions {
   identifierCase: CaseOption;
   keywordCase: KeywordCaseOption;
   linesBetweenQueries: number;
+  linesBetweenVariables?: number;
   maxLineLength: number;
   useBrackets: boolean;
   useMaxLineLength: boolean;
@@ -179,8 +179,8 @@ class SqlFormatter {
       this.currentLine = '';
       return;
     }
-    const line = this.currentLine;
-    const isBlank = line.trim() === '';
+    const line = this.currentLine.trimEnd();
+    const isBlank = line.length === 0;
     if (isBlank && this.lines.length > 0 && this.lines[this.lines.length - 1] === '') {
       this.currentLine = '';
       this.currentLineTouched = false;
@@ -243,6 +243,14 @@ class SqlFormatter {
   private caseWord(token: Token): string {
     if (token.type !== 'word') return token.value;
     if (token.value.charCodeAt(0) === 91 || token.value.charCodeAt(0) === 34) return token.value;
+    const prev = this.peek(-2);
+    const next = this.peek(0);
+    if ((prev?.type === 'dot' && next?.type !== 'oparen') || next?.type === 'dot') {
+      return this.applyIdentifierCasing(token);
+    }
+    if (!KEYWORDS.has(token.upper) && FUNCTIONS.has(token.upper) && next?.type !== 'oparen') {
+      return this.applyIdentifierCasing(token);
+    }
     if (isKeywordLike(token)) {
       return applyCase(token.value, this.options.keywordCase);
     }
@@ -276,12 +284,12 @@ class SqlFormatter {
   }
 
   private emitCommentRun(indent: number): void {
-    let first = true;
+    let prevWasSingleLine = false;
     while (!this.atEnd() && this.peek()?.type === 'comment') {
       const token = this.advance();
       const isBlockComment = token.value.startsWith('/*');
 
-      if (first || isBlockComment) {
+      if (!prevWasSingleLine || isBlockComment) {
         this.finishLine();
         this.pushBlankLineIfNeeded();
       }
@@ -291,14 +299,11 @@ class SqlFormatter {
       this.emitCommentText(token.value);
 
       this.finishLine();
-      if (isBlockComment) {
-        this.pushBlankLineIfNeeded();
-      }
       this.currentLineBaseIndent = indent;
       this.currentLine = getIndentSpaces(indent);
       this.currentLineTouched = false;
 
-      first = false;
+      prevWasSingleLine = !isBlockComment;
     }
   }
 
@@ -366,17 +371,56 @@ class SqlFormatter {
     return false;
   }
 
+  private isVariableStatement(offset: number = 0): boolean {
+    const u = this.upper(offset);
+    if (u === 'DECLARE') return true;
+    if (u === 'SET' && Boolean(this.peek(offset + 1)?.value.startsWith('@'))) return true;
+    return false;
+  }
+
+  private emitCommaIfPresent(): boolean {
+    if (this.peek()?.type === 'comma') {
+      this.emit(',');
+      this.advance();
+      return true;
+    }
+    if (this.peek()?.type === 'comment') {
+      let offset = 1;
+      while (this.peek(offset)?.type === 'comment') offset++;
+      if (this.peek(offset)?.type === 'comma') {
+        this.emit(',');
+        this.tokens.splice(this.pos + offset, 1);
+        return true;
+      }
+    }
+    return false;
+  }
+
+  private emitSemicolonIfPresent(): void {
+    if (this.peek()?.type === 'semicolon') {
+      this.emit(this.advance().value);
+      return;
+    }
+    if (this.peek()?.type === 'comment') {
+      let offset = 1;
+      while (this.peek(offset)?.type === 'comment') offset++;
+      if (this.peek(offset)?.type === 'semicolon') {
+        this.emit(this.tokens[this.pos + offset].value);
+        this.tokens.splice(this.pos + offset, 1);
+      }
+    }
+  }
+
   private formatInlineStatementToTerminator(): void {
     if (this.atEnd()) return;
     this.emitToken(this.advance());
-    const atTerminator = () => this.peek()?.type === 'semicolon' || this.upper() === 'GO';
+    const atTerminator = () =>
+      this.peek()?.type === 'semicolon' || this.upper() === 'GO' || this.isStatementStart();
     if (!this.atEnd() && !atTerminator()) {
       this.emit(' ');
       this.writeInlineUntil(atTerminator);
     }
-    if (this.peek()?.type === 'semicolon') {
-      this.emit(this.advance().value);
-    }
+    this.emitSemicolonIfPresent();
   }
 
   private isClauseKeyword(): boolean {
@@ -408,6 +452,8 @@ class SqlFormatter {
   // --- Statement list formatter (synchronous) ---
   private formatStatementList(insideBlock: boolean): void {
     let first = true;
+    let prevWasVariable = false;
+
     while (!this.atEnd()) {
       if (insideBlock) {
         const u = this.upper();
@@ -427,6 +473,8 @@ class SqlFormatter {
         const nextWord = nextToken?.type === 'word' ? nextToken.upper : '';
         if (nextWord === 'GO') {
           this.finishLine();
+        } else if (prevWasVariable && this.isVariableStatement(0)) {
+          this.blankLines(Math.max(0, this.options.linesBetweenVariables ?? 0));
         } else {
           this.blankLines(this.options.linesBetweenQueries);
         }
@@ -437,14 +485,17 @@ class SqlFormatter {
       this.currentLineTouched = false;
 
       this.emitCommentRun(this.indent);
+      while (this.peek()?.type === 'semicolon') this.advance();
       if (this.atEnd()) break;
       if (insideBlock && (this.isEndKeyword() || this.upper() === 'ELSE')) break;
 
+      const isStmtVar = this.isVariableStatement(0);
       const posBefore = this.pos;
       this.formatStatement();
       if (this.pos === posBefore && !this.atEnd()) {
         this.emitToken(this.advance());
       }
+      prevWasVariable = isStmtVar;
       first = false;
     }
   }
@@ -452,6 +503,7 @@ class SqlFormatter {
   // --- Statement list formatter (asynchronous, non-blocking) ---
   private async formatStatementListAsync(insideBlock: boolean): Promise<void> {
     let first = true;
+    let prevWasVariable = false;
 
     while (!this.atEnd()) {
       if (this.yieldController) {
@@ -479,6 +531,8 @@ class SqlFormatter {
         const nextWord = nextToken?.type === 'word' ? nextToken.upper : '';
         if (nextWord === 'GO') {
           this.finishLine();
+        } else if (prevWasVariable && this.isVariableStatement(0)) {
+          this.blankLines(Math.max(0, this.options.linesBetweenVariables ?? 0));
         } else {
           this.blankLines(this.options.linesBetweenQueries);
         }
@@ -489,14 +543,17 @@ class SqlFormatter {
       this.currentLineTouched = false;
 
       this.emitCommentRun(this.indent);
+      while (this.peek()?.type === 'semicolon') this.advance();
       if (this.atEnd()) break;
       if (insideBlock && (this.isEndKeyword() || this.upper() === 'ELSE')) break;
 
+      const isStmtVar = this.isVariableStatement(0);
       const posBefore = this.pos;
       await this.formatStatementAsync();
       if (this.pos === posBefore && !this.atEnd()) {
         this.emitToken(this.advance());
       }
+      prevWasVariable = isStmtVar;
       first = false;
     }
   }
@@ -532,6 +589,7 @@ class SqlFormatter {
       case 'DROP':
       case 'DROP TABLE IF EXISTS':
       case 'DROP PROCEDURE IF EXISTS':
+      case 'DROP PROC IF EXISTS':
       case 'DROP FUNCTION IF EXISTS':
       case 'DROP VIEW IF EXISTS':
       case 'DROP TRIGGER IF EXISTS':
@@ -541,6 +599,10 @@ class SqlFormatter {
       case 'DROP SEQUENCE IF EXISTS':
       case 'DROP SYNONYM IF EXISTS':
       case 'DROP INDEX IF EXISTS':
+      case 'DROP USER IF EXISTS':
+      case 'DROP ROLE IF EXISTS':
+      case 'DROP RULE IF EXISTS':
+      case 'DROP DEFAULT IF EXISTS':
         return this.formatDrop();
       case 'INSERT':
       case 'INSERT INTO':
@@ -581,6 +643,8 @@ class SqlFormatter {
         return this.formatBeginTryCatch();
       case 'BEGIN TRAN':
       case 'BEGIN TRANSACTION':
+      case 'BEGIN DISTRIBUTED TRAN':
+      case 'BEGIN DISTRIBUTED TRANSACTION':
         return this.formatBeginTran();
       case 'COMMIT':
       case 'ROLLBACK':
@@ -600,10 +664,13 @@ class SqlFormatter {
         return this.formatSimpleCmd();
       case 'EXEC':
       case 'EXECUTE':
+      case 'EXECUTE AS':
         return this.formatExec();
       case 'PRINT':
         return this.formatPrint();
       case 'SET':
+      case 'SET NOCOUNT':
+      case 'SET IDENTITY_INSERT':
         return this.formatSetStatement();
       case 'TRUNCATE':
       case 'TRUNCATE TABLE':
@@ -620,6 +687,9 @@ class SqlFormatter {
       case 'CLOSE':
       case 'FETCH':
       case 'DEALLOCATE':
+      case 'WAITFOR':
+      case 'WAITFOR DELAY':
+      case 'WAITFOR TIME':
       case 'BACKUP':
       case 'RESTORE':
       case 'DBCC':
@@ -637,8 +707,11 @@ class SqlFormatter {
   // --- DECLARE ---
   private formatDeclare(): void {
     this.emitToken(this.advance()); // DECLARE
-    this.emit(' ');
-    this.writeInlineUntil(() => this.isStatementStart());
+    if (!this.atEnd() && !this.isStatementStart() && this.peek()?.type !== 'semicolon') {
+      this.emit(' ');
+      this.writeInlineUntil(() => this.isStatementStart() || this.peek()?.type === 'semicolon');
+    }
+    this.emitSemicolonIfPresent();
   }
 
   // --- CREATE TABLE ---
@@ -649,7 +722,8 @@ class SqlFormatter {
       if (this.upper() === 'TABLE') {
         this.formatCreateTableBody();
       } else {
-        this.writeInlineUntil(() => this.isStatementStart());
+        this.writeInlineUntil(() => this.isStatementStart() || this.peek()?.type === 'semicolon');
+        this.emitSemicolonIfPresent();
       }
       return;
     }
@@ -674,22 +748,21 @@ class SqlFormatter {
     while (!this.atEnd() && this.peek()?.type !== 'cparen') {
       if (this.peek()?.type === 'comment') {
         this.emitCommentRun(colIndent);
+        if (this.peek()?.type === 'comma') {
+          this.advance();
+        }
         continue;
       }
       this.newLine(colIndent);
       this.writeInlineUntil(() => this.peek()?.type === 'comma' || this.peek()?.type === 'cparen');
-      if (this.peek()?.type === 'comma') {
-        this.emit(this.advance().value); // ,
-      }
+      this.emitCommaIfPresent();
     }
 
     this.newLine(this.indent);
     if (this.peek()?.type === 'cparen') {
       this.emit(this.advance().value); // )
     }
-    if (this.peek()?.type === 'semicolon') {
-      this.emit(this.advance().value);
-    }
+    this.emitSemicolonIfPresent();
   }
 
   private formatCreateTable(): void {
@@ -710,22 +783,21 @@ class SqlFormatter {
     while (!this.atEnd() && this.peek()?.type !== 'cparen') {
       if (this.peek()?.type === 'comment') {
         this.emitCommentRun(colIndent);
+        if (this.peek()?.type === 'comma') {
+          this.advance();
+        }
         continue;
       }
       this.newLine(colIndent);
       this.writeInlineUntil(() => this.peek()?.type === 'comma' || this.peek()?.type === 'cparen');
-      if (this.peek()?.type === 'comma') {
-        this.emit(this.advance().value); // ,
-      }
+      this.emitCommaIfPresent();
     }
 
     this.newLine(stmtIndent);
     if (this.peek()?.type === 'cparen') {
       this.emit(this.advance().value); // )
     }
-    if (this.peek()?.type === 'semicolon') {
-      this.emit(this.advance().value);
-    }
+    this.emitSemicolonIfPresent();
   }
 
   // --- DROP ---
@@ -735,9 +807,7 @@ class SqlFormatter {
       this.emit(' ');
       this.writeInlineUntil(() => this.isStatementStart() || this.peek()?.type === 'semicolon');
     }
-    if (this.peek()?.type === 'semicolon') {
-      this.emit(this.advance().value);
-    }
+    this.emitSemicolonIfPresent();
   }
 
   // --- INSERT ---
@@ -755,7 +825,8 @@ class SqlFormatter {
       () =>
         (this.upper() === 'VALUES' && this.peek(-1)?.upper !== 'DEFAULT') ||
         this.isWordAt(0, 'SELECT', 'EXEC', 'EXECUTE') ||
-        this.isStatementStart(),
+        this.isStatementStart() ||
+        this.peek()?.type === 'semicolon',
     );
 
     if (this.peek()?.type === 'comment') {
@@ -772,6 +843,8 @@ class SqlFormatter {
     } else if (this.isWordAt(0, 'EXEC', 'EXECUTE')) {
       this.newLine(stmtIndent);
       this.formatExec();
+    } else {
+      this.emitSemicolonIfPresent();
     }
   }
 
@@ -783,7 +856,25 @@ class SqlFormatter {
       if (this.peek()?.type === 'semicolon' || this.peek()?.type === 'cparen') break;
 
       if (this.peek()?.type === 'comment') {
+        let offset = 1;
+        while (this.peek(offset)?.type === 'comment') offset++;
+        const savedPos = this.pos;
+        this.pos += offset;
+        const endsList =
+          this.atEnd() ||
+          this.isClauseKeyword() ||
+          this.isStatementStart() ||
+          this.isEndKeyword() ||
+          this.peek()?.type === 'cparen' ||
+          this.peek()?.type === 'semicolon';
+        this.pos = savedPos;
+        if (endsList) {
+          break;
+        }
         this.emitCommentRun(rowIndent);
+        if (this.peek()?.type === 'comma') {
+          this.advance();
+        }
         continue;
       }
 
@@ -801,24 +892,23 @@ class SqlFormatter {
         return false;
       });
 
-      if (this.peek()?.type === 'comma') {
-        this.emit(',');
-        this.advance();
-        if (this.peek()?.type === 'comment' && !this.peek()!.hasPrecedingNewline) {
-          this.emit(' ');
-          this.emitCommentText(this.advance().value);
-        }
+      if (this.emitCommaIfPresent()) {
         continue;
       }
 
       if (this.peek()?.type === 'semicolon') {
         this.emit(';');
         this.advance();
-        if (this.peek()?.type === 'comment' && !this.peek()!.hasPrecedingNewline) {
-          this.emit(' ');
-          this.emitCommentText(this.advance().value);
-        }
         break;
+      }
+      if (this.peek()?.type === 'comment') {
+        let offset = 1;
+        while (this.peek(offset)?.type === 'comment') offset++;
+        if (this.peek(offset)?.type === 'semicolon') {
+          this.emit(';');
+          this.tokens.splice(this.pos + offset, 1);
+          break;
+        }
       }
     }
 
@@ -831,6 +921,14 @@ class SqlFormatter {
     this.emitToken(this.advance()); // UPDATE
     this.emit(' ');
     this.writeTableRef();
+
+    if (this.peek()?.type === 'comment') {
+      let offset = 1;
+      while (this.peek(offset)?.type === 'comment') offset++;
+      if (this.upper(offset) === 'SET') {
+        this.emitCommentRun(stmtIndent);
+      }
+    }
 
     if (this.upper() === 'SET') {
       this.newLine(stmtIndent);
@@ -845,11 +943,26 @@ class SqlFormatter {
   private writeSetClause(stmtIndent: number): void {
     let prevToken: Token | null = null;
     while (!this.atEnd()) {
-      if (this.isClauseKeyword() || this.isStatementStart()) break;
+      if (this.isClauseKeyword() || this.isStatementStart() || this.peek()?.type === 'semicolon') {
+        break;
+      }
 
       const token = this.peek()!;
 
       if (token.type === 'comment') {
+        let offset = 1;
+        while (this.peek(offset)?.type === 'comment') offset++;
+        const savedPos = this.pos;
+        this.pos += offset;
+        const atStop =
+          this.atEnd() ||
+          this.isClauseKeyword() ||
+          this.isStatementStart() ||
+          this.peek()?.type === 'semicolon';
+        this.pos = savedPos;
+        if (atStop) {
+          break;
+        }
         this.emitCommentRun(stmtIndent);
         prevToken = null;
         continue;
@@ -909,12 +1022,28 @@ class SqlFormatter {
 
     this.writeTableRef();
 
+    if (this.peek()?.type === 'comment') {
+      let offset = 1;
+      while (this.peek(offset)?.type === 'comment') offset++;
+      if (this.upper(offset) === 'USING') {
+        this.emitCommentRun(stmtIndent);
+      }
+    }
+
     // USING <source>
     if (this.upper() === 'USING') {
       this.newLine(stmtIndent);
       this.emitToken(this.advance()); // USING
       this.emit(' ');
       this.writeTableRef();
+    }
+
+    if (this.peek()?.type === 'comment') {
+      let offset = 1;
+      while (this.peek(offset)?.type === 'comment') offset++;
+      if (this.upper(offset) === 'ON') {
+        this.emitCommentRun(stmtIndent + INDENT_SIZE);
+      }
     }
 
     // ON <condition>
@@ -933,6 +1062,17 @@ class SqlFormatter {
     // WHEN clauses
     while (!this.atEnd()) {
       if (this.peek()?.type === 'semicolon' || this.isStatementStart()) break;
+
+      if (this.peek()?.type === 'comment') {
+        let offset = 1;
+        while (this.peek(offset)?.type === 'comment') offset++;
+        const nextUpper = this.upper(offset);
+        if (nextUpper.startsWith('WHEN') || nextUpper === 'OUTPUT' || nextUpper === 'OPTION') {
+          this.emitCommentRun(stmtIndent);
+          continue;
+        }
+        break;
+      }
 
       const u = this.upper();
       if (u.startsWith('WHEN')) {
@@ -1039,9 +1179,7 @@ class SqlFormatter {
       break;
     }
 
-    if (this.peek()?.type === 'semicolon') {
-      this.emit(this.advance().value);
-    }
+    this.emitSemicolonIfPresent();
   }
 
   // --- SELECT (standalone) ---
@@ -1088,7 +1226,25 @@ class SqlFormatter {
       }
 
       if (this.peek()?.type === 'comment') {
+        let offset = 1;
+        while (this.peek(offset)?.type === 'comment') offset++;
+        const savedPos = this.pos;
+        this.pos += offset;
+        const endsList =
+          this.atEnd() ||
+          this.isClauseKeyword() ||
+          this.isStatementStart() ||
+          this.isEndKeyword() ||
+          this.peek()?.type === 'cparen' ||
+          this.peek()?.type === 'semicolon';
+        this.pos = savedPos;
+        if (endsList) {
+          break;
+        }
         this.emitCommentRun(colIndent);
+        if (this.peek()?.type === 'comma') {
+          this.advance();
+        }
         firstCol = false;
         continue;
       }
@@ -1104,13 +1260,23 @@ class SqlFormatter {
         return false;
       });
 
-      if (this.peek()?.type === 'comma') {
-        this.emit(',');
+      if (this.emitCommaIfPresent()) {
+        firstCol = false;
+        continue;
       }
       if (this.peek()?.type === 'semicolon') {
         this.emit(';');
         this.advance();
         break;
+      }
+      if (this.peek()?.type === 'comment') {
+        let offset = 1;
+        while (this.peek(offset)?.type === 'comment') offset++;
+        if (this.peek(offset)?.type === 'semicolon') {
+          this.emit(';');
+          this.tokens.splice(this.pos + offset, 1);
+          break;
+        }
       }
 
       firstCol = false;
@@ -1211,6 +1377,12 @@ class SqlFormatter {
 
   // --- Optional clauses (FROM, WHERE, JOIN, GROUP BY, ORDER BY, WINDOW, OPTION, etc.) ---
   private formatOptionalClauses(stmtIndent: number): void {
+    const clauseStop = () =>
+      this.isClauseKeyword() ||
+      this.isStatementStart() ||
+      this.peek()?.type === 'cparen' ||
+      this.peek()?.type === 'semicolon';
+
     while (!this.atEnd()) {
       const u = this.upper();
 
@@ -1226,6 +1398,11 @@ class SqlFormatter {
         let offset = 1;
         while (this.peek(offset)?.type === 'comment') offset++;
         const nextTok = this.peek(offset);
+        if (nextTok?.type === 'semicolon') {
+          this.emit(nextTok.value);
+          this.tokens.splice(this.pos + offset, 1);
+          break;
+        }
         const nextUpper = nextTok?.type === 'word' ? nextTok.upper : '';
         const isClauseNext =
           CLAUSE_KEYWORDS.has(nextUpper) ||
@@ -1233,7 +1410,7 @@ class SqlFormatter {
           nextUpper === 'ON';
 
         if (isClauseNext) {
-          this.emitCommentRun(stmtIndent);
+          this.emitCommentRun(nextUpper === 'ON' ? stmtIndent + INDENT_SIZE : stmtIndent);
           continue;
         } else {
           break;
@@ -1245,9 +1422,10 @@ class SqlFormatter {
         this.emitToken(this.advance()); // FROM
         this.emit(' ');
         this.writeTableRef(true);
-        while (this.peek()?.type === 'comma') {
-          this.emit(',');
-          this.advance(); // consume comma
+        while (this.emitCommaIfPresent()) {
+          if (this.peek()?.type === 'comment') {
+            this.emitCommentRun(stmtIndent + INDENT_SIZE);
+          }
           this.newLine(stmtIndent + INDENT_SIZE);
           this.writeTableRef(true);
         }
@@ -1263,9 +1441,7 @@ class SqlFormatter {
         this.newLine(stmtIndent + INDENT_SIZE);
         this.emitToken(this.advance()); // ON
         this.emit(' ');
-        this.writeInlineUntil(
-          () => this.isClauseKeyword() || this.isStatementStart() || this.peek()?.type === 'cparen',
-        );
+        this.writeInlineUntil(clauseStop);
         continue;
       }
 
@@ -1278,9 +1454,7 @@ class SqlFormatter {
         this.newLine(stmtIndent);
         this.emitToken(this.advance()); // GROUP BY
         this.emit(' ');
-        this.writeInlineUntil(
-          () => this.isClauseKeyword() || this.isStatementStart() || this.peek()?.type === 'cparen',
-        );
+        this.writeInlineUntil(clauseStop);
         continue;
       }
 
@@ -1288,9 +1462,7 @@ class SqlFormatter {
         this.newLine(stmtIndent);
         this.emitToken(this.advance()); // ORDER BY
         this.emit(' ');
-        this.writeInlineUntil(
-          () => this.isClauseKeyword() || this.isStatementStart() || this.peek()?.type === 'cparen',
-        );
+        this.writeInlineUntil(clauseStop);
         continue;
       }
 
@@ -1298,9 +1470,7 @@ class SqlFormatter {
         this.newLine(stmtIndent);
         this.emitToken(this.advance()); // HAVING
         this.emit(' ');
-        this.writeInlineUntil(
-          () => this.isClauseKeyword() || this.isStatementStart() || this.peek()?.type === 'cparen',
-        );
+        this.writeInlineUntil(clauseStop);
         continue;
       }
 
@@ -1308,9 +1478,7 @@ class SqlFormatter {
         this.newLine(stmtIndent);
         this.emitToken(this.advance()); // OUTPUT
         this.emit(' ');
-        this.writeInlineUntil(
-          () => this.isClauseKeyword() || this.isStatementStart() || this.peek()?.type === 'cparen',
-        );
+        this.writeInlineUntil(clauseStop);
         continue;
       }
 
@@ -1318,9 +1486,7 @@ class SqlFormatter {
         this.newLine(stmtIndent);
         this.emitToken(this.advance()); // WINDOW
         this.emit(' ');
-        this.writeInlineUntil(
-          () => this.isClauseKeyword() || this.isStatementStart() || this.peek()?.type === 'cparen',
-        );
+        this.writeInlineUntil(clauseStop);
         continue;
       }
 
@@ -1358,6 +1524,9 @@ class SqlFormatter {
       ) {
         this.newLine(stmtIndent);
         this.emitToken(this.advance());
+        if (this.peek()?.type === 'comment') {
+          this.emitCommentRun(stmtIndent);
+        }
         this.newLine(stmtIndent);
         if (this.upper() === 'SELECT') {
           this.formatSelectQuery(stmtIndent);
@@ -1371,20 +1540,13 @@ class SqlFormatter {
         this.emitToken(this.advance()); // OFFSET
         this.emit(' ');
         this.writeInlineUntil(
-          () =>
-            this.upper() === 'FETCH' ||
-            this.isClauseKeyword() ||
-            this.isStatementStart() ||
-            this.peek()?.type === 'cparen',
+          () => this.upper() === 'FETCH' || clauseStop(),
         );
         if (this.upper() === 'FETCH') {
           this.emit(' ');
           this.emitToken(this.advance()); // FETCH
           this.emit(' ');
-          this.writeInlineUntil(
-            () =>
-              this.isClauseKeyword() || this.isStatementStart() || this.peek()?.type === 'cparen',
-          );
+          this.writeInlineUntil(clauseStop);
         }
         continue;
       }
@@ -1396,10 +1558,7 @@ class SqlFormatter {
         if (this.peek()?.type === 'oparen') {
           this.writeInlineParens();
         } else {
-          this.writeInlineUntil(
-            () =>
-              this.isClauseKeyword() || this.isStatementStart() || this.peek()?.type === 'cparen',
-          );
+          this.writeInlineUntil(clauseStop);
         }
         continue;
       }
@@ -1426,10 +1585,7 @@ class SqlFormatter {
           if (this.peek()?.type !== 'oparen') {
             this.emit(' ');
           }
-          this.writeInlineUntil(
-            () =>
-              this.isClauseKeyword() || this.isStatementStart() || this.peek()?.type === 'cparen',
-          );
+          this.writeInlineUntil(clauseStop);
         }
         continue;
       }
@@ -1446,11 +1602,25 @@ class SqlFormatter {
 
     this.writeTableRef(true);
 
+    if (this.peek()?.type === 'comment') {
+      let offset = 1;
+      while (this.peek(offset)?.type === 'comment') offset++;
+      if (this.upper(offset) === 'ON') {
+        this.emitCommentRun(stmtIndent + INDENT_SIZE);
+      }
+    }
+
     if (this.upper() === 'ON') {
       this.newLine(stmtIndent + INDENT_SIZE);
       this.emitToken(this.advance()); // ON
       this.emit(' ');
-      this.writeInlineUntil(() => this.isClauseKeyword() || this.isStatementStart());
+      this.writeInlineUntil(
+        () =>
+          this.isClauseKeyword() ||
+          this.isStatementStart() ||
+          this.peek()?.type === 'cparen' ||
+          this.peek()?.type === 'semicolon',
+      );
     }
   }
 
@@ -1464,12 +1634,24 @@ class SqlFormatter {
       this.isAndOr() ||
       this.isClauseKeyword() ||
       this.isStatementStart() ||
-      this.peek()?.type === 'cparen';
+      this.peek()?.type === 'cparen' ||
+      this.peek()?.type === 'semicolon';
 
     this.writeInlineUntil(stopCondition);
-    if (this.isAndOr()) this.emit(' ');
 
-    while (this.isAndOr()) {
+    while (!this.atEnd()) {
+      if (this.peek()?.type === 'comment') {
+        let offset = 1;
+        while (this.peek(offset)?.type === 'comment') offset++;
+        const nextUpper = this.upper(offset);
+        if (nextUpper === 'AND' || nextUpper === 'OR') {
+          const alignIndent = nextUpper === 'AND' ? stmtIndent + 2 : stmtIndent + 3;
+          this.emitCommentRun(alignIndent);
+        } else {
+          break;
+        }
+      }
+      if (!this.isAndOr()) break;
       const kw = this.upper();
       const alignIndent = kw === 'AND' ? stmtIndent + 2 : stmtIndent + 3;
       this.newLine(alignIndent);
@@ -1489,9 +1671,12 @@ class SqlFormatter {
       this.writeInlineUntil(() => this.isWordAt(0, 'WHEN', 'ELSE', 'END'));
     }
 
-    this.emit(' ');
-
     while (!this.atEnd()) {
+      if (this.peek()?.type === 'comment') {
+        this.emitCommentRun(caseCol);
+        continue;
+      }
+
       const u = this.upper();
 
       if (u === 'WHEN' || u === 'ELSE') {
@@ -1522,7 +1707,7 @@ class SqlFormatter {
       () =>
         this.upper() === 'BEGIN' ||
         this.upper() === 'BEGIN TRY' ||
-        (this.isStatementStart() && this.upper() !== 'SELECT') ||
+        this.isStatementStart() ||
         this.atEnd(),
     );
 
@@ -1588,7 +1773,7 @@ class SqlFormatter {
       () =>
         this.upper() === 'BEGIN' ||
         this.upper() === 'BEGIN TRY' ||
-        (this.isStatementStart() && this.upper() !== 'SELECT') ||
+        this.isStatementStart() ||
         this.atEnd(),
     );
 
@@ -1661,6 +1846,7 @@ class SqlFormatter {
       this.newLine(blockIndent);
       this.emitToken(this.advance()); // END
     }
+    this.emitSemicolonIfPresent();
   }
 
   // --- BEGIN...END block (plain, async) ---
@@ -1676,6 +1862,7 @@ class SqlFormatter {
       this.newLine(blockIndent);
       this.emitToken(this.advance()); // END
     }
+    this.emitSemicolonIfPresent();
   }
 
   // --- BEGIN TRY...END TRY / BEGIN CATCH...END CATCH ---
@@ -1695,6 +1882,7 @@ class SqlFormatter {
       this.newLine(blockIndent);
       this.emitToken(this.advance());
     }
+    this.emitSemicolonIfPresent();
 
     if (this.upper() === 'BEGIN CATCH') {
       this.newLine(blockIndent);
@@ -1719,6 +1907,7 @@ class SqlFormatter {
       this.newLine(blockIndent);
       this.emitToken(this.advance());
     }
+    this.emitSemicolonIfPresent();
 
     if (this.upper() === 'BEGIN CATCH') {
       this.newLine(blockIndent);
@@ -1728,10 +1917,7 @@ class SqlFormatter {
 
   // --- BEGIN TRAN/TRANSACTION ---
   private formatBeginTran(): void {
-    this.emitToken(this.advance());
-    if (this.peek()?.type === 'semicolon') {
-      this.emit(this.advance().value);
-    }
+    this.formatTransactionCmd();
   }
 
   // --- Transaction commands ---
@@ -1745,9 +1931,7 @@ class SqlFormatter {
       this.emit(' ');
       this.writeInlineUntil(() => this.isStatementStart() || this.peek()?.type === 'semicolon');
     }
-    if (this.peek()?.type === 'semicolon') {
-      this.emit(this.advance().value);
-    }
+    this.emitSemicolonIfPresent();
   }
 
   // --- Simple commands (THROW, RAISERROR, RETURN, etc.) ---
@@ -1755,15 +1939,19 @@ class SqlFormatter {
     this.emitToken(this.advance());
     if (!this.atEnd() && !this.isStatementStart() && this.peek()?.type !== 'semicolon') {
       this.emit(' ');
-      this.writeInlineUntil(() => this.isStatementStart());
+      this.writeInlineUntil(() => this.isStatementStart() || this.peek()?.type === 'semicolon');
     }
+    this.emitSemicolonIfPresent();
   }
 
   // --- EXEC/EXECUTE ---
   private formatExec(): void {
     this.emitToken(this.advance());
-    this.emit(' ');
-    this.writeInlineUntil(() => this.isStatementStart());
+    if (!this.atEnd() && !this.isStatementStart() && this.peek()?.type !== 'semicolon') {
+      this.emit(' ');
+      this.writeInlineUntil(() => this.isStatementStart() || this.peek()?.type === 'semicolon');
+    }
+    this.emitSemicolonIfPresent();
   }
 
   // --- WHILE ---
@@ -1773,10 +1961,7 @@ class SqlFormatter {
     this.emit(' ');
 
     this.writeInlineUntil(
-      () =>
-        this.upper() === 'BEGIN' ||
-        (this.isStatementStart() && this.upper() !== 'SELECT') ||
-        this.atEnd(),
+      () => this.upper() === 'BEGIN' || this.isStatementStart() || this.atEnd(),
     );
 
     if (this.peek()?.type === 'comment') {
@@ -1801,10 +1986,7 @@ class SqlFormatter {
     this.emit(' ');
 
     this.writeInlineUntil(
-      () =>
-        this.upper() === 'BEGIN' ||
-        (this.isStatementStart() && this.upper() !== 'SELECT') ||
-        this.atEnd(),
+      () => this.upper() === 'BEGIN' || this.isStatementStart() || this.atEnd(),
     );
 
     if (this.peek()?.type === 'comment') {
@@ -1825,27 +2007,31 @@ class SqlFormatter {
   // --- SET (standalone statement, e.g., SET NOCOUNT ON) ---
   private formatSetStatement(): void {
     this.emitToken(this.advance()); // SET
-    this.emit(' ');
-    this.writeInlineUntil(() => this.isStatementStart());
+    if (!this.atEnd() && !this.isStatementStart() && this.peek()?.type !== 'semicolon') {
+      this.emit(' ');
+      this.writeInlineUntil(() => this.isStatementStart() || this.peek()?.type === 'semicolon');
+    }
+    this.emitSemicolonIfPresent();
   }
 
   // --- PRINT ---
   private formatPrint(): void {
     this.emitToken(this.advance()); // PRINT
-    this.emit(' ');
-    this.writeInlineUntil(() => this.isStatementStart());
+    if (!this.atEnd() && !this.isStatementStart() && this.peek()?.type !== 'semicolon') {
+      this.emit(' ');
+      this.writeInlineUntil(() => this.isStatementStart() || this.peek()?.type === 'semicolon');
+    }
+    this.emitSemicolonIfPresent();
   }
 
   // --- USE statement ---
   private formatUse(): void {
     this.emitToken(this.advance()); // USE
-    if (!this.atEnd() && !this.isStatementStart()) {
+    if (!this.atEnd() && !this.isStatementStart() && this.peek()?.type !== 'semicolon') {
       this.emit(' ');
-      this.writeInlineUntil(() => this.isStatementStart());
+      this.writeInlineUntil(() => this.isStatementStart() || this.peek()?.type === 'semicolon');
     }
-    if (this.peek()?.type === 'semicolon') {
-      this.emit(this.advance().value);
-    }
+    this.emitSemicolonIfPresent();
   }
 
   // --- GO batch separator ---
@@ -1855,14 +2041,7 @@ class SqlFormatter {
       this.emit(' ');
       this.emitToken(this.advance());
     }
-    if (this.peek()?.type === 'semicolon') {
-      this.emit(this.advance().value);
-    }
-    if (this.peek()?.type === 'comment') {
-      this.emit(' ');
-      const c = this.advance();
-      this.emitCommentText(c.value);
-    }
+    this.emitSemicolonIfPresent();
   }
 
   // --- ALTER TABLE / ALTER statement ---
@@ -1880,9 +2059,7 @@ class SqlFormatter {
         return false;
       });
     }
-    if (this.peek()?.type === 'semicolon') {
-      this.emit(this.advance().value);
-    }
+    this.emitSemicolonIfPresent();
   }
 
   // --- Generic line ---
@@ -1893,9 +2070,7 @@ class SqlFormatter {
       this.emit(' ');
       this.writeInlineUntil(() => this.isStatementStart() || this.peek()?.type === 'semicolon');
     }
-    if (this.peek()?.type === 'semicolon') {
-      this.emit(this.advance().value);
-    }
+    this.emitSemicolonIfPresent();
   }
 
   // --- Table reference ---
@@ -1985,16 +2160,20 @@ class SqlFormatter {
       const token = this.peek()!;
 
       if (token.type === 'comment') {
-        if (token.hasPrecedingNewline) {
+        let offset = 1;
+        while (this.peek(offset)?.type === 'comment') offset++;
+        const savedPos = this.pos;
+        this.pos += offset;
+        const atStop =
+          this.atEnd() ||
+          stop() ||
+          this.peek()?.type === 'semicolon';
+        this.pos = savedPos;
+        if (atStop) {
           break;
         }
-        if (this.needsSpaceBefore(token, prevToken)) this.emit(' ');
-        this.advance();
-        this.emitCommentText(token.value);
-        if (token.value.startsWith('--') || token.value.includes('\n')) {
-          break;
-        }
-        prevToken = token;
+        this.emitCommentRun(this.currentLineBaseIndent);
+        prevToken = null;
         continue;
       }
 
@@ -2026,7 +2205,7 @@ class SqlFormatter {
   private writeInlineCase(): void {
     this.emitToken(this.advance()); // CASE
     let depth = 1;
-    let prevToken: Token = makeToken('word', 'CASE');
+    let prevToken: Token | null = makeToken('word', 'CASE');
 
     while (!this.atEnd() && depth > 0) {
       const token = this.peek()!;
@@ -2054,21 +2233,8 @@ class SqlFormatter {
       }
 
       if (token.type === 'comment') {
-        if (token.hasPrecedingNewline) {
-          this.newLine(this.indent + INDENT_SIZE);
-          this.advance();
-          this.emitCommentText(token.value);
-          this.newLine(this.indent + INDENT_SIZE);
-          prevToken = token;
-          continue;
-        }
-        if (this.needsSpaceBefore(token, prevToken)) this.emit(' ');
-        this.advance();
-        this.emitCommentText(token.value);
-        if (token.value.startsWith('--') || token.value.includes('\n')) {
-          break;
-        }
-        prevToken = token;
+        this.emitCommentRun(this.currentLineBaseIndent + INDENT_SIZE);
+        prevToken = null;
         continue;
       }
 
@@ -2114,6 +2280,12 @@ class SqlFormatter {
 
     while (!this.atEnd() && depth > 0) {
       const token = this.peek()!;
+
+      if (token.type === 'comment') {
+        this.emitCommentRun(this.currentLineBaseIndent + INDENT_SIZE);
+        prevToken = null;
+        continue;
+      }
 
       if (token.type === 'oparen' && this.isSubqueryStart()) {
         if (this.needsSpaceBefore(token, prevToken)) this.emit(' ');

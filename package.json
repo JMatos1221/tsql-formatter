@@ -88,6 +88,13 @@
           "minimum": 0,
           "order": 60,
           "description": "Number of empty lines between instructions (SELECT, DELETE, UPDATE, INSERT, etc.)."
+        },
+        "tsqlFormatter.linesBetweenVariables": {
+          "type": "number",
+          "default": 0,
+          "minimum": 0,
+          "order": 61,
+          "description": "Number of empty lines between consecutive variable declarations (DECLARE) or assignments (SET @var = ...)."
         }
       }
     }

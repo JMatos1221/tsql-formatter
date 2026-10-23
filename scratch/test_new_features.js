@@ -1,13 +1,5 @@
 const assert = require('assert');
-const {
-  formatTsql,
-  formatTsqlAsync,
-  KEYWORDS,
-  FUNCTIONS,
-  CLAUSE_KEYWORDS,
-  STATEMENT_START_KEYWORDS,
-} = require('../out/formatter');
-const { KEYWORDS: KW, FUNCTIONS: FN } = require('../out/keywords');
+const { formatTsql, formatTsqlAsync } = require('../out/formatter');
 
 console.log('--- Testing New Features & Keyword Coverage ---\n');
 
@@ -116,10 +108,47 @@ test('Identifier with $ is preserved', () => {
   assert(formatted.includes('dbo.T$table'), 'Expected dbo.T$table');
 });
 
+test('OFFSET ... FETCH NEXT ... ROWS ONLY pagination formatted properly', () => {
+  const sql =
+    'select id, name from dbo.Users order by id asc offset 10 rows fetch next 20 rows only;';
+  const formatted = formatTsql(sql, { ...defaultOptions, useBrackets: true });
+  const expected =
+    'SELECT\n    [id],\n    [name]\nFROM [dbo].[Users]\nORDER BY [id] ASC\nOFFSET 10 ROWS FETCH NEXT 20 ROWS ONLY;\n';
+  assert.strictEqual(formatted, expected);
+});
+
+test('MERGE 6-word WHEN NOT MATCHED BY TARGET/SOURCE THEN keywords', () => {
+  const sql =
+    'merge into dbo.T as t using dbo.S as s on t.id = s.id when not matched by target then insert (id) values (s.id) when not matched by source then delete;';
+  const formatted = formatTsql(sql, { ...defaultOptions, useBrackets: true });
+  assert(
+    formatted.includes('WHEN NOT MATCHED BY TARGET THEN'),
+    'Expected WHEN NOT MATCHED BY TARGET THEN:\n' + formatted,
+  );
+  assert(
+    formatted.includes('WHEN NOT MATCHED BY SOURCE THEN'),
+    'Expected WHEN NOT MATCHED BY SOURCE THEN:\n' + formatted,
+  );
+});
+
+test('IS NOT DISTINCT FROM and INNER HASH/LOOP/MERGE JOIN', () => {
+  const sql =
+    'select u.id from dbo.Users u inner hash join dbo.Orders o on u.id is not distinct from o.user_id;';
+  const formatted = formatTsql(sql, { ...defaultOptions, useBrackets: true });
+  const expected =
+    'SELECT\n    [u].[id]\nFROM [dbo].[Users] [u]\nINNER HASH JOIN [dbo].[Orders] [o]\n    ON [u].[id] IS NOT DISTINCT FROM [o].[user_id];\n';
+  assert.strictEqual(formatted, expected);
+});
+
 // 2. Async non-blocking tests
 (async () => {
   await testAsync('formatTsqlAsync formats identically to formatTsql', async () => {
     const sql = `
+DECLARE @a INT = 1;
+DECLARE @b INT = 2;
+SET @a = 3;
+IF NOT EXISTS (SELECT 1 FROM dbo.Customers c INNER JOIN dbo.Orders o ON c.id = o.customer_id)
+BEGIN
 SELECT c.id, c.name, count(o.id) AS order_count
 FROM dbo.Customers c
 LEFT JOIN dbo.Orders o ON c.id = o.customer_id
@@ -128,6 +157,7 @@ GROUP BY c.id, c.name
 HAVING count(o.id) > 5
 ORDER BY order_count DESC
 OPTION (RECOMPILE);
+END
     `.trim();
 
     const syncResult = formatTsql(sql, defaultOptions);
