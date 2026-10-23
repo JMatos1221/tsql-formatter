@@ -1539,9 +1539,7 @@ class SqlFormatter {
         this.newLine(stmtIndent);
         this.emitToken(this.advance()); // OFFSET
         this.emit(' ');
-        this.writeInlineUntil(
-          () => this.upper() === 'FETCH' || clauseStop(),
-        );
+        this.writeInlineUntil(() => this.upper() === 'FETCH' || clauseStop());
         if (this.upper() === 'FETCH') {
           this.emit(' ');
           this.emitToken(this.advance()); // FETCH
@@ -2164,10 +2162,7 @@ class SqlFormatter {
         while (this.peek(offset)?.type === 'comment') offset++;
         const savedPos = this.pos;
         this.pos += offset;
-        const atStop =
-          this.atEnd() ||
-          stop() ||
-          this.peek()?.type === 'semicolon';
+        const atStop = this.atEnd() || stop() || this.peek()?.type === 'semicolon';
         this.pos = savedPos;
         if (atStop) {
           break;
