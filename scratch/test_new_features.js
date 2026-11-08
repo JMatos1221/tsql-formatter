@@ -140,6 +140,13 @@ test('IS NOT DISTINCT FROM and INNER HASH/LOOP/MERGE JOIN', () => {
   assert.strictEqual(formatted, expected);
 });
 
+test('indentSize: 2 formats indented clauses and columns with 2-space indentation', () => {
+  const sql = 'select id, name from dbo.Users;';
+  const formatted = formatTsql(sql, { ...defaultOptions, indentSize: 2 });
+  const expected = 'SELECT\n  id,\n  name\nFROM dbo.Users;\n';
+  assert.strictEqual(formatted, expected);
+});
+
 // 2. Comprehensive coverage for 10 newly implemented T-SQL features
 
 test('SELECT ... INTO #TargetTable FROM ... formats INTO on its own line', () => {

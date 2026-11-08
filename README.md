@@ -2,7 +2,36 @@
 
 A high-performance Visual Studio Code extension for formatting Microsoft T-SQL (Transact-SQL) code consistently and cleanly.
 
+## Latest Changes
+
+### T-SQL Use Case Enhancements
+
+- **`SELECT ... INTO #TargetTable`**: Formatted with `INTO` on its own line beneath column lists.
+- **`TOP (n) PERCENT WITH TIES`**: Complete support for expressions, percentage, and tie-breaking across `SELECT`, `INSERT`, `UPDATE`, and `DELETE`.
+- **DML `TOP`**: Clean formatting for `UPDATE TOP (n)` and `DELETE TOP (n)` without statement fragmentation.
+- **CTE Column Lists**: Formats `WITH cte (col1, col2) AS (SELECT ...)` cleanly with inline column projections.
+- **Cursors & Table Variables**: First-class formatting for `DECLARE cur CURSOR ... FOR SELECT` and `DECLARE @tbl TABLE (...)` / `DECLARE [@tbl] TABLE (...)`.
+- **DML `OUTPUT ... INTO`**: Formatted on dedicated indented lines across `INSERT`, `UPDATE`, `DELETE`, and `MERGE`.
+- **Multi-Condition Joins**: Activated `breakOnKeywords` to format `AND` / `OR` continuation lines indented beneath `ON`.
+- **Modern T-SQL**: Full casing support for `APPROX_PERCENTILE_CONT`, `APPROX_PERCENTILE_DISC`, `GREATEST`, `LEAST`, `DATETRUNC`, and `GENERATE_SERIES`.
+
+### Performance Optimizations
+
+- **Zero-Copy Token Lookahead**: Replaced $O(N)$ array splices with in-place token tombstoning, eliminating $O(N^2)$ overhead on large SQL files.
+- **Greedy Longest-Match Multi-Word Tokenization**: Rapid trie-based multi-word keyword recognition without backtracking.
+
+### New Settings
+
+- **`tsqlFormatter.indentSize`**: Customizable indentation scale (1 to 8 spaces, default: `4`). Inherits VS Code editor tab size when omitted.
+- **`tsqlFormatter.breakOnKeywords`**: Now actively controls multi-condition join formatting (`AND` / `OR` lines under `ON`).
+
+---
+
 - [Clean T-SQL Formatter](#-clean-t-sql-formatter)
+  - [Latest Changes](#latest-changes)
+    - [T-SQL Use Case Enhancements](#t-sql-use-case-enhancements)
+    - [Performance Optimizations](#performance-optimizations)
+    - [New Settings](#new-settings)
   - [Install](#install)
   - [Features](#features)
   - [Comment Formatting Rules](#comment-formatting-rules)
@@ -12,7 +41,11 @@ A high-performance Visual Studio Code extension for formatting Microsoft T-SQL (
   - [Settings](#settings)
   - [Examples](#examples)
     - [Basic Query](#basic-query)
+    - [`SELECT ... INTO` \& `TOP (n) PERCENT WITH TIES`](#select--into--top-n-percent-with-ties)
     - [Multi-Row `INSERT ... VALUES` \& Table Value Constructors](#multi-row-insert--values--table-value-constructors)
+    - [DML Statements with `OUTPUT ... INTO`](#dml-statements-with-output--into)
+    - [Table Variables, Cursors \& CTE Column Projections](#table-variables-cursors--cte-column-projections)
+    - [Multi-Condition Joins](#multi-condition-joins)
     - [Subqueries, CTEs \& Table-Valued Functions](#subqueries-ctes--table-valued-functions)
     - [MERGE Statement](#merge-statement)
     - [Comment Formatting](#comment-formatting)
@@ -39,19 +72,19 @@ The extension activates automatically when you open a `.sql` file.
 ## Features
 
 - **Full T-SQL Statement Coverage**:
-  - **DML**: `SELECT`, `INSERT` / `INSERT INTO` (including cleanly aligned single-row and multi-row `VALUES` lists, `INSERT ... SELECT`, and `INSERT ... EXEC`), `UPDATE`, `DELETE`, and full clause formatting for `MERGE` (`USING`, `ON`, `WHEN MATCHED THEN`, `WHEN NOT MATCHED [BY TARGET|BY SOURCE] THEN`, `OUTPUT`).
-  - **Table Sources & Joins**: Supports standard joins (`INNER`, `LEFT`, `RIGHT`, `FULL`, `CROSS`), `CROSS APPLY` / `OUTER APPLY`, derived table value constructors (`FROM (VALUES (...), (...)) AS t(cols)`), ANSI comma joins (`FROM t1, t2`), `PIVOT` and `UNPIVOT`, `TABLESAMPLE`, and table hints (`WITH (NOLOCK)`).
+  - **DML**: `SELECT`, `SELECT ... INTO #TargetTable` (with `INTO` on its own line beneath column projections), `INSERT` / `INSERT INTO` (including cleanly aligned single-row and multi-row `VALUES` lists, `INSERT ... SELECT`, and `INSERT ... EXEC`), `UPDATE`, `DELETE`, `TOP (n) [PERCENT] [WITH TIES]` across DML statements without fragmentation, dedicated `OUTPUT ... INTO` line formatting across statements, and full clause formatting for `MERGE` (`USING`, `ON`, `WHEN MATCHED THEN`, `WHEN NOT MATCHED [BY TARGET|BY SOURCE] THEN`, `OUTPUT`).
+  - **Table Sources & Joins**: Supports standard joins (`INNER`, `LEFT`, `RIGHT`, `FULL`, `CROSS`), `CROSS APPLY` / `OUTER APPLY`, derived table value constructors (`FROM (VALUES (...), (...)) AS t(cols)`), ANSI comma joins (`FROM t1, t2`), multi-condition joins with indented `AND` / `OR` lines beneath `ON`, `PIVOT` and `UNPIVOT`, `TABLESAMPLE`, and table hints (`WITH (NOLOCK)`).
   - **Table-Valued & Rowset Functions**: Native support for built-in and user-defined TVFs (`STRING_SPLIT`, `GENERATE_SERIES`, `OPENJSON`, `OPENROWSET`, `OPENQUERY`, `OPENDATASOURCE`, `OPENXML`, `dbo.fn_GetUsers(...)`) in `FROM` and `JOIN` clauses.
   - **DDL**: `CREATE TABLE` (column constraints, `IDENTITY(seed, increment)`, computed columns), `CREATE OR ALTER PROCEDURE / VIEW / FUNCTION`, `DROP TABLE IF EXISTS` (and all object variants), `ALTER TABLE` (including `ALTER COLUMN`, `ADD CONSTRAINT`, `DROP CONSTRAINT`), and `CREATE INDEX` (with `INCLUDE`, `WHERE`, and `WITH (...)` index options).
-  - **Expressions & Control Flow**: CTEs (`WITH ... AS`), subqueries, `CASE` expressions, window functions (`OVER`, `PARTITION BY`, `ROWS/RANGE/GROUPS`, `WINDOW`), `IF ... ELSE`, `BEGIN ... END`, `BEGIN TRY ... END CATCH`, transactions (`BEGIN TRAN`, `SAVE TRAN`, `COMMIT WORK`), cursors, and `GO` batches.
-  - **Modern T-SQL & Vector Extensions**: SQL Server 2022 & 2025 vector data types and functions (`VECTOR(1536)`, `VECTOR_DISTANCE`, `VECTOR_NORM`), `DATETRUNC`, `DATE_BUCKET`, `JSON_PATH_EXISTS`, and `APPROX_COUNT_DISTINCT`.
+  - **Expressions & Control Flow**: CTEs (`WITH ... AS`) including explicit column projection lists (`WITH cte (c1, c2) AS (...)`), subqueries, `CASE` expressions, window functions (`OVER`, `PARTITION BY`, `ROWS/RANGE/GROUPS`, `WINDOW`), `IF ... ELSE`, `BEGIN ... END`, `BEGIN TRY ... END CATCH`, transactions (`BEGIN TRAN`, `SAVE TRAN`, `COMMIT WORK`), cursors (`DECLARE cur CURSOR FOR SELECT`), table variables (`DECLARE @tbl TABLE (...)` / `DECLARE [@tbl] TABLE (...)`), and `GO` batches.
+  - **Modern T-SQL & Vector Extensions**: SQL Server 2022 & 2025 vector data types and functions (`VECTOR(1536)`, `VECTOR_DISTANCE`, `VECTOR_NORM`), `APPROX_PERCENTILE_CONT`, `APPROX_PERCENTILE_DISC`, `GREATEST`, `LEAST`, `DATETRUNC`, `DATE_BUCKET`, `GENERATE_SERIES`, `JSON_PATH_EXISTS`, and `APPROX_COUNT_DISTINCT`.
   - **Robust Lexing**: Supports Unicode / international identifiers (`código`, `preço`), compound assignment operators (`+=`, `-=`, `*=`, `/=`, `%=`, `&=`, `^=`, `|=`), HierarchyID / CLR scope resolution operator (`::`), hexadecimal literals (`0x...`), scientific notation (`1e5`), nested block comments (`/* ... /* ... */ ... */`), and bracketed identifiers with escaped brackets (`[Table]]Name]`).
 - **Consistent Multi-Row `VALUES` & Line Wrapping**: Places `VALUES` on its own line and aligns every row tuple `( ... )` at the same indentation level beneath `VALUES` (even across 100+ rows). Long lines that wrap multiple times via `maxLineLength` maintain a steady continuation indent relative to the statement's base indent without stair-stepping.
 - **Strict & Clean Comment Formatting**: Preserves single-line (`--`) and multi-line (`/* */`) comments, formatting comment runs with precise spacing rules.
 - **Document & Selection Formatting**: Format an entire SQL document or format only the selected SQL statements.
 - **Asynchronous, Non-Blocking Pipeline**: Formats large documents and complex batches without freezing the VS Code editor UI. Cooperatively yields to the Node.js event loop across tokenization (`tokenizeAsync`), multi-word keyword merging (`mergeMultiWordKeywordsAsync`), statement parsing, and nested execution blocks (`BEGIN ... END`, `BEGIN TRY ... END TRY`, `IF ... ELSE`, `WHILE`). Promptly honors VS Code cancellation tokens (e.g., when continuing to type while formatting).
-- **High-Performance Architecture**: Employs precomputed multi-word patterns, zero-allocation indentation caching, bracketed identifier bypass, and direct line-range calculation in VS Code to avoid duplicate full-text buffer allocations.
-- **Customizable Casing & Style Options**: Configure keyword casing (`UPPER`, `lower`, `preserve`), identifier casing, bracketed identifiers (`[TableName]`), line wrapping lengths, clause breaks, and blank line spacing between queries.
+- **High-Performance Architecture**: Employs zero-copy token lookahead with in-place token tombstoning (eliminating $O(N^2)$ overhead on large files), greedy longest-match multi-word tokenization, zero-allocation indentation caching, bracketed identifier bypass, and direct line-range calculation in VS Code to avoid duplicate full-text buffer allocations.
+- **Customizable Casing & Style Options**: Configure indentation size (`indentSize`, 1–8 spaces), keyword casing (`UPPER`, `lower`, `preserve`), identifier casing, bracketed identifiers (`[TableName]`), line wrapping lengths, clause breaks (including multi-condition join `AND`/`OR` formatting), and blank line spacing between queries.
 - **VS Code Format-on-Save Support**: Seamless integration with `editor.formatOnSave`.
 
 ---
@@ -98,9 +131,10 @@ Customize extension behavior in VS Code Settings (`Ctrl+,` or `Cmd+,`) by search
 
 | Setting                               | Type      | Default      | Description                                                                                                                                                           |
 | :------------------------------------ | :-------- | :----------- | :-------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `tsqlFormatter.breakOnKeywords`       | `boolean` | `true`       | Break into a new line for keywords like `WHERE`, `JOIN`, `AND`, `OR`.                                                                                                 |
+| `tsqlFormatter.breakOnKeywords`       | `boolean` | `true`       | Break into a new line for clause keywords like `WHERE`, `JOIN` and multi-condition joins (`AND`, `OR` indented under `ON`).                                           |
 | `tsqlFormatter.keywordCase`           | `string`  | `"preserve"` | Keyword casing mode (`"upper"`, `"lower"`, or `"preserve"`).                                                                                                          |
 | `tsqlFormatter.identifierCase`        | `string`  | `"preserve"` | Identifier casing mode for database/schema/table/column names (`"upper"`, `"lower"`, or `"preserve"`).                                                                |
+| `tsqlFormatter.indentSize`            | `number`  | `4`          | Number of spaces per indentation level (minimum: 1, maximum: 8). Automatically inherits VS Code editor tab size when omitted.                                         |
 | `tsqlFormatter.useBrackets`           | `boolean` | `false`      | Wrap table/column identifiers in square brackets (e.g., `[TableName]`). Variables (`@var`, `@@sysvar`) and temp tables (`#temp`, `##global`) are **never** bracketed. |
 | `tsqlFormatter.linesBetweenQueries`   | `number`  | `2`          | Number of empty lines between top-level SQL statements.                                                                                                               |
 | `tsqlFormatter.linesBetweenVariables` | `number`  | `0`          | Number of empty lines between consecutive variable declarations (`DECLARE`) or assignments (`SET @var = ...`).                                                        |
@@ -113,6 +147,7 @@ Example `.vscode/settings.json`:
 {
   "tsqlFormatter.keywordCase": "upper",
   "tsqlFormatter.identifierCase": "preserve",
+  "tsqlFormatter.indentSize": 4,
   "tsqlFormatter.useBrackets": false,
   "tsqlFormatter.linesBetweenQueries": 2,
   "tsqlFormatter.linesBetweenVariables": 0
@@ -146,6 +181,31 @@ ORDER BY name;
 
 ---
 
+### `SELECT ... INTO` & `TOP (n) PERCENT WITH TIES`
+
+`SELECT ... INTO` formats the target destination table on its own line below the projected column list. `TOP (n) PERCENT WITH TIES` preserves expressions, percentages, and ties without breaking column projections:
+
+**Before:**
+
+```sql
+select top (10) percent with ties id, name, score into #TopStudents from dbo.Students where active = 1 order by score desc;
+```
+
+**After:**
+
+```sql
+SELECT TOP (10) PERCENT WITH TIES
+    id,
+    name,
+    score
+INTO #TopStudents
+FROM dbo.Students
+WHERE active = 1
+ORDER BY score DESC;
+```
+
+---
+
 ### Multi-Row `INSERT ... VALUES` & Table Value Constructors
 
 **Before:**
@@ -174,6 +234,80 @@ FROM (
         (1, 'A'),
         (2, 'B')
 ) AS t(id, code);
+```
+
+---
+
+### DML Statements with `OUTPUT ... INTO`
+
+`OUTPUT ... INTO` clauses are formatted onto dedicated lines across `INSERT`, `UPDATE`, `DELETE`, and `MERGE` operations, preserving clean statement flow without crowding:
+
+```sql
+UPDATE TOP (5) dbo.Users
+SET status = 'inactive'
+OUTPUT inserted.id, deleted.status, inserted.status INTO @StatusAudit
+WHERE last_login < DATEADD(year, -1, GETDATE());
+
+DELETE TOP (10) FROM dbo.AuditLogs
+OUTPUT deleted.id, deleted.created_at INTO @PurgedLogs
+WHERE created_at < '2025-01-01';
+
+INSERT INTO dbo.ArchiveLogs (entry_id, payload)
+OUTPUT inserted.id, inserted.entry_id INTO @InsertedRows
+VALUES
+    (1, 'payload_a'),
+    (2, 'payload_b');
+```
+
+---
+
+### Table Variables, Cursors & CTE Column Projections
+
+Format table variable schemas, cursor declarations, and common table expressions with explicit column projection lists:
+
+```sql
+DECLARE @TempUsers TABLE (
+    id INT NOT NULL,
+    name VARCHAR(50) NULL,
+    created_at DATETIME2(7) NOT NULL
+);
+
+DECLARE user_cursor CURSOR FOR
+SELECT
+    id,
+    name
+FROM dbo.Users;
+
+WITH RankedOrders (order_id, customer_id, ranking) AS (
+    SELECT
+        order_id,
+        customer_id,
+        ROW_NUMBER() OVER(PARTITION BY customer_id ORDER BY order_date DESC)
+    FROM dbo.Orders
+)
+SELECT
+    order_id,
+    customer_id,
+    ranking
+FROM RankedOrders
+WHERE ranking <= 3;
+```
+
+---
+
+### Multi-Condition Joins
+
+When `breakOnKeywords: true` is enabled, compound join conditions split `AND` / `OR` keywords onto their own aligned lines indented beneath `ON`:
+
+```sql
+SELECT
+    a.id,
+    b.name
+FROM dbo.TableA a
+INNER JOIN dbo.TableB b
+    ON a.id = b.id
+    AND a.tenant_id = b.tenant_id
+    OR a.is_admin = 1;
 ```
 
 ---

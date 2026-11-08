@@ -2,7 +2,7 @@
   "name": "clean-tsql-formatter",
   "displayName": "Clean T-SQL Formatter",
   "description": "A VS Code formatter extension for T-SQL.",
-  "version": "1.5.3",
+  "version": "1.5.4",
   "icon": "icon.png",
   "license": "MIT",
   "publisher": "JMatos1221",
@@ -56,6 +56,14 @@
           "default": "preserve",
           "order": 20,
           "description": "Identifier casing mode for database/schema/table/column names."
+        },
+        "tsqlFormatter.indentSize": {
+          "type": "number",
+          "default": 4,
+          "minimum": 1,
+          "maximum": 8,
+          "order": 25,
+          "description": "Number of spaces per indentation level."
         },
         "tsqlFormatter.useBrackets": {
           "type": "boolean",

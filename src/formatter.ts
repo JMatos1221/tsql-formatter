@@ -25,6 +25,7 @@ export type KeywordCaseOption = 'upper' | 'lower' | 'preserve';
 export interface FormatterOptions {
   breakOnKeywords: boolean;
   identifierCase: CaseOption;
+  indentSize?: number;
   keywordCase: KeywordCaseOption;
   linesBetweenQueries: number;
   linesBetweenVariables?: number;
@@ -54,7 +55,6 @@ function isKeywordLike(token: Token): boolean {
 }
 
 const NON_WRAPPING_TYPES = new Set(['comma', 'cparen', 'semicolon', 'dot']);
-const INDENT_SIZE = 4;
 
 const SPACES: string[] = [];
 for (let i = 0; i <= 128; i++) {
@@ -104,6 +104,7 @@ class SqlFormatter {
   private currentLineTouched: boolean = false;
   private currentLineBaseIndent: number = 0;
   private indent: number = 0;
+  private indentSize: number;
   private options: FormatterOptions;
   private cancellationToken?: CancellationTokenLike;
   private yieldController?: AsyncYieldController;
@@ -116,6 +117,7 @@ class SqlFormatter {
   ) {
     this.tokens = tokens;
     this.options = options;
+    this.indentSize = Math.max(1, Math.min(8, options.indentSize ?? 4));
     this.cancellationToken = cancellationToken;
     if (isAsync) {
       this.yieldController = new AsyncYieldController(cancellationToken);
@@ -269,7 +271,7 @@ class SqlFormatter {
       this.currentLine = this.currentLine.slice(0, -1);
     }
     const baseIndent = this.currentLineBaseIndent;
-    this.newLine(baseIndent + INDENT_SIZE);
+    this.newLine(baseIndent + this.indentSize);
     this.currentLineBaseIndent = baseIndent;
   }
 
@@ -753,7 +755,7 @@ class SqlFormatter {
     this.emit(' ');
     this.emit(this.advance().value); // (
 
-    const colIndent = stmtIndent + INDENT_SIZE;
+    const colIndent = stmtIndent + this.indentSize;
     while (!this.atEnd() && this.peek()?.type !== 'cparen') {
       if (this.peek()?.type === 'comment') {
         this.emitCommentRun(colIndent);
@@ -982,7 +984,7 @@ class SqlFormatter {
   }
 
   private formatValuesRows(stmtIndent: number): void {
-    const rowIndent = stmtIndent + INDENT_SIZE;
+    const rowIndent = stmtIndent + this.indentSize;
 
     while (!this.atEnd()) {
       if (this.isStatementStart() || this.isEndKeyword() || this.isClauseKeyword()) break;
@@ -1181,13 +1183,13 @@ class SqlFormatter {
       let offset = 1;
       while (this.peek(offset)?.type === 'comment') offset++;
       if (this.upper(offset) === 'ON') {
-        this.emitCommentRun(stmtIndent + INDENT_SIZE);
+        this.emitCommentRun(stmtIndent + this.indentSize);
       }
     }
 
     // ON <condition>
     if (this.upper() === 'ON') {
-      const onIndent = stmtIndent + INDENT_SIZE;
+      const onIndent = stmtIndent + this.indentSize;
       this.newLine(onIndent);
       this.emitToken(this.advance()); // ON
       this.emit(' ');
@@ -1254,7 +1256,7 @@ class SqlFormatter {
           }
         }
 
-        const actionIndent = stmtIndent + INDENT_SIZE;
+        const actionIndent = stmtIndent + this.indentSize;
         this.newLine(actionIndent);
         const actionUpper = this.upper();
 
@@ -1379,7 +1381,7 @@ class SqlFormatter {
   }
 
   private formatSelectColumns(stmtIndent: number): void {
-    const colIndent = stmtIndent + INDENT_SIZE;
+    const colIndent = stmtIndent + this.indentSize;
     let firstCol = true;
 
     while (!this.atEnd()) {
@@ -1489,7 +1491,7 @@ class SqlFormatter {
       if (this.peek()?.type === 'oparen') {
         this.emit(this.advance().value); // (
 
-        const bodyIndent = stmtIndent + INDENT_SIZE;
+        const bodyIndent = stmtIndent + this.indentSize;
         this.newLine(bodyIndent);
         this.indent = bodyIndent;
         if (this.peek()?.type === 'comment') {
@@ -1585,7 +1587,7 @@ class SqlFormatter {
           nextUpper === 'ON';
 
         if (isClauseNext) {
-          this.emitCommentRun(nextUpper === 'ON' ? stmtIndent + INDENT_SIZE : stmtIndent);
+          this.emitCommentRun(nextUpper === 'ON' ? stmtIndent + this.indentSize : stmtIndent);
           continue;
         } else {
           break;
@@ -1607,9 +1609,9 @@ class SqlFormatter {
         this.writeTableRef(true);
         while (this.emitCommaIfPresent()) {
           if (this.peek()?.type === 'comment') {
-            this.emitCommentRun(stmtIndent + INDENT_SIZE);
+            this.emitCommentRun(stmtIndent + this.indentSize);
           }
-          this.newLine(stmtIndent + INDENT_SIZE);
+          this.newLine(stmtIndent + this.indentSize);
           this.writeTableRef(true);
         }
         continue;
@@ -1621,7 +1623,7 @@ class SqlFormatter {
       }
 
       if (u === 'ON') {
-        const onIndent = stmtIndent + INDENT_SIZE;
+        const onIndent = stmtIndent + this.indentSize;
         this.newLine(onIndent);
         this.emitToken(this.advance()); // ON
         this.emit(' ');
@@ -1808,11 +1810,11 @@ class SqlFormatter {
       let offset = 1;
       while (this.peek(offset)?.type === 'comment') offset++;
       if (this.upper(offset) === 'ON') {
-        this.emitCommentRun(stmtIndent + INDENT_SIZE);
+        this.emitCommentRun(stmtIndent + this.indentSize);
       }
     }
 
-    const onIndent = stmtIndent + INDENT_SIZE;
+    const onIndent = stmtIndent + this.indentSize;
     if (this.upper() === 'ON') {
       this.newLine(onIndent);
       this.emitToken(this.advance()); // ON
@@ -1913,7 +1915,7 @@ class SqlFormatter {
       }
 
       if (u === 'END') {
-        this.lineAt(lineIndent + INDENT_SIZE);
+        this.lineAt(lineIndent + this.indentSize);
         this.emitToken(this.advance()); // END
         break;
       }
@@ -1947,7 +1949,7 @@ class SqlFormatter {
       this.newLine(stmtIndent);
       this.formatBeginTryCatch();
     } else {
-      this.indent = stmtIndent + INDENT_SIZE;
+      this.indent = stmtIndent + this.indentSize;
       this.newLine();
       this.formatStatement();
       this.indent = stmtIndent;
@@ -1980,7 +1982,7 @@ class SqlFormatter {
         this.newLine(stmtIndent);
         this.formatBeginTryCatch();
       } else {
-        this.indent = stmtIndent + INDENT_SIZE;
+        this.indent = stmtIndent + this.indentSize;
         this.newLine();
         this.formatStatement();
         this.indent = stmtIndent;
@@ -2013,7 +2015,7 @@ class SqlFormatter {
       this.newLine(stmtIndent);
       await this.formatBeginTryCatchAsync();
     } else {
-      this.indent = stmtIndent + INDENT_SIZE;
+      this.indent = stmtIndent + this.indentSize;
       this.newLine();
       await this.formatStatementAsync();
       this.indent = stmtIndent;
@@ -2046,7 +2048,7 @@ class SqlFormatter {
         this.newLine(stmtIndent);
         await this.formatBeginTryCatchAsync();
       } else {
-        this.indent = stmtIndent + INDENT_SIZE;
+        this.indent = stmtIndent + this.indentSize;
         this.newLine();
         await this.formatStatementAsync();
         this.indent = stmtIndent;
@@ -2063,7 +2065,7 @@ class SqlFormatter {
     const blockIndent = this.indent;
     this.emitToken(this.advance()); // BEGIN
 
-    this.indent = blockIndent + INDENT_SIZE;
+    this.indent = blockIndent + this.indentSize;
     this.formatStatementList(true);
     this.indent = blockIndent;
 
@@ -2079,7 +2081,7 @@ class SqlFormatter {
     const blockIndent = this.indent;
     this.emitToken(this.advance()); // BEGIN
 
-    this.indent = blockIndent + INDENT_SIZE;
+    this.indent = blockIndent + this.indentSize;
     await this.formatStatementListAsync(true);
     this.indent = blockIndent;
 
@@ -2096,7 +2098,7 @@ class SqlFormatter {
 
     this.emitToken(this.advance());
 
-    this.indent = blockIndent + INDENT_SIZE;
+    this.indent = blockIndent + this.indentSize;
     this.formatStatementList(true);
     this.indent = blockIndent;
 
@@ -2121,7 +2123,7 @@ class SqlFormatter {
 
     this.emitToken(this.advance());
 
-    this.indent = blockIndent + INDENT_SIZE;
+    this.indent = blockIndent + this.indentSize;
     await this.formatStatementListAsync(true);
     this.indent = blockIndent;
 
@@ -2197,7 +2199,7 @@ class SqlFormatter {
       this.newLine(stmtIndent);
       this.formatBeginEndBlock();
     } else {
-      this.indent = stmtIndent + INDENT_SIZE;
+      this.indent = stmtIndent + this.indentSize;
       this.newLine();
       this.formatStatement();
       this.indent = stmtIndent;
@@ -2222,7 +2224,7 @@ class SqlFormatter {
       this.newLine(stmtIndent);
       await this.formatBeginEndBlockAsync();
     } else {
-      this.indent = stmtIndent + INDENT_SIZE;
+      this.indent = stmtIndent + this.indentSize;
       this.newLine();
       await this.formatStatementAsync();
       this.indent = stmtIndent;
@@ -2459,7 +2461,7 @@ class SqlFormatter {
       }
 
       if (token.type === 'comment') {
-        this.emitCommentRun(this.currentLineBaseIndent + INDENT_SIZE);
+        this.emitCommentRun(this.currentLineBaseIndent + this.indentSize);
         prevToken = null;
         continue;
       }
@@ -2475,7 +2477,7 @@ class SqlFormatter {
     const baseIndent = this.currentLine.length - this.currentLine.trimStart().length;
     this.emit('(');
     this.advance(); // consume (
-    const subIndent = baseIndent + INDENT_SIZE;
+    const subIndent = baseIndent + this.indentSize;
     this.newLine(subIndent);
     const savedIndent = this.indent;
     this.indent = subIndent;
@@ -2508,7 +2510,7 @@ class SqlFormatter {
       const token = this.peek()!;
 
       if (token.type === 'comment') {
-        this.emitCommentRun(this.currentLineBaseIndent + INDENT_SIZE);
+        this.emitCommentRun(this.currentLineBaseIndent + this.indentSize);
         prevToken = null;
         continue;
       }

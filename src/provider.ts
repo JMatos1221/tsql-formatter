@@ -22,31 +22,32 @@ export class TsqlFormattingProvider
 {
   async provideDocumentFormattingEdits(
     document: vscode.TextDocument,
-    _options?: vscode.FormattingOptions,
+    formattingOptions?: vscode.FormattingOptions,
     token?: vscode.CancellationToken,
   ): Promise<vscode.TextEdit[]> {
     const vscodeMod = getVsCode();
     const lastLineIndex = Math.max(0, document.lineCount - 1);
     const lastLine = document.lineAt(lastLineIndex);
     const fullRange = new vscodeMod.Range(new vscodeMod.Position(0, 0), lastLine.range.end);
-    return this.provideFormattingEdits(document, fullRange, token);
+    return this.provideFormattingEdits(document, fullRange, formattingOptions, token);
   }
 
   async provideDocumentRangeFormattingEdits(
     document: vscode.TextDocument,
     range: vscode.Range,
-    _options?: vscode.FormattingOptions,
+    formattingOptions?: vscode.FormattingOptions,
     token?: vscode.CancellationToken,
   ): Promise<vscode.TextEdit[]> {
     if (range.isEmpty) {
       return [];
     }
-    return this.provideFormattingEdits(document, range, token);
+    return this.provideFormattingEdits(document, range, formattingOptions, token);
   }
 
   private async provideFormattingEdits(
     document: vscode.TextDocument,
     range: vscode.Range,
+    formattingOptions?: vscode.FormattingOptions,
     token?: vscode.CancellationToken,
   ): Promise<vscode.TextEdit[]> {
     const vscodeMod = getVsCode();
@@ -54,6 +55,7 @@ export class TsqlFormattingProvider
     const options: FormatterOptions = {
       breakOnKeywords: config.get<boolean>('breakOnKeywords', true),
       identifierCase: config.get<CaseOption>('identifierCase', 'preserve'),
+      indentSize: config.get<number>('indentSize', formattingOptions?.tabSize ?? 4),
       keywordCase: config.get<KeywordCaseOption>('keywordCase', 'preserve'),
       linesBetweenQueries: Math.max(0, config.get<number>('linesBetweenQueries', 2)),
       linesBetweenVariables: Math.max(0, config.get<number>('linesBetweenVariables', 0)),
