@@ -18,6 +18,7 @@ export interface Token {
   // Precomputed upper-case value for 'word' tokens (empty string otherwise).
   upper: string;
   hasPrecedingNewline: boolean;
+  isTombstone?: boolean;
 }
 
 export interface CancellationTokenLike {

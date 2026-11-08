@@ -140,7 +140,150 @@ test('IS NOT DISTINCT FROM and INNER HASH/LOOP/MERGE JOIN', () => {
   assert.strictEqual(formatted, expected);
 });
 
-// 2. Async non-blocking tests
+// 2. Comprehensive coverage for 10 newly implemented T-SQL features
+
+test('SELECT ... INTO #TargetTable FROM ... formats INTO on its own line', () => {
+  const sql = 'select id, name into #TempUsers from dbo.Users where active = 1;';
+  const formatted = formatTsql(sql, defaultOptions);
+  const expected =
+    'SELECT\n    id,\n    name\nINTO #TempUsers\nFROM dbo.Users\nWHERE active = 1;\n';
+  assert.strictEqual(formatted, expected);
+});
+
+test('SELECT TOP (10) PERCENT WITH TIES formats without splitting into columns', () => {
+  const sql = 'select top (10) percent with ties id, name from dbo.Users order by id desc;';
+  const formatted = formatTsql(sql, defaultOptions);
+  const expected =
+    'SELECT TOP (10) PERCENT WITH TIES\n    id,\n    name\nFROM dbo.Users\nORDER BY id DESC;\n';
+  assert.strictEqual(formatted, expected);
+});
+
+test('UPDATE TOP (5) formats without fragmenting statement or table reference', () => {
+  const sql = "update top (5) dbo.Users set status = 'inactive' where last_login = 0;";
+  const formatted = formatTsql(sql, defaultOptions);
+  const expected = "UPDATE TOP (5) dbo.Users\nSET status = 'inactive'\nWHERE last_login = 0;\n";
+  assert.strictEqual(formatted, expected);
+});
+
+test('DELETE TOP (10) formats without fragmenting statement', () => {
+  const sql = 'delete top (10) from dbo.Logs where log_date = 1;';
+  const formatted = formatTsql(sql, defaultOptions);
+  const expected = 'DELETE TOP (10) FROM dbo.Logs\nWHERE log_date = 1;\n';
+  assert.strictEqual(formatted, expected);
+});
+
+test('WITH cte (col1, col2) AS (SELECT ...) explicit column projection preserves parenthesized columns', () => {
+  const sql =
+    'with cte (col1, col2) as (select id, name from dbo.Users) select col1, col2 from cte;';
+  const formatted = formatTsql(sql, defaultOptions);
+  const expected =
+    'WITH cte (col1, col2) AS (\n    SELECT\n        id,\n        name\n    FROM dbo.Users\n)\nSELECT\n    col1,\n    col2\nFROM cte;\n';
+  assert.strictEqual(formatted, expected);
+});
+
+test('DECLARE cur CURSOR FOR SELECT ... does not break into fragmented statements', () => {
+  const sql = 'declare user_cursor cursor for select id, name from dbo.Users;';
+  const formatted = formatTsql(sql, defaultOptions);
+  const expected = 'DECLARE user_cursor CURSOR FOR\nSELECT\n    id,\n    name\nFROM dbo.Users;\n';
+  assert.strictEqual(formatted, expected);
+});
+
+test('DECLARE @tbl TABLE (...) formats table columns with clean indentation', () => {
+  const sql = 'declare @tbl table (id int not null, name varchar(50) null);';
+  const formatted = formatTsql(sql, defaultOptions);
+  const expected = 'DECLARE @tbl TABLE (\n    id INT NOT NULL,\n    name VARCHAR(50) NULL\n);\n';
+  assert.strictEqual(formatted, expected);
+});
+
+test('DECLARE [@tbl] TABLE (...) bracketed identifier formats table columns with clean indentation', () => {
+  const sql = 'declare [@tbl] table (id int not null, name varchar(50) null);';
+  const formatted = formatTsql(sql, defaultOptions);
+  const expected = 'DECLARE [@tbl] TABLE (\n    id INT NOT NULL,\n    name VARCHAR(50) NULL\n);\n';
+  assert.strictEqual(formatted, expected);
+});
+
+test('Multi-condition JOIN ... ON breaks AND/OR onto indented lines when breakOnKeywords: true', () => {
+  const sql =
+    'select a.id, b.name from dbo.TableA a inner join dbo.TableB b on a.id = b.id and a.tenant_id = b.tenant_id or a.is_admin = 1;';
+  const formatted = formatTsql(sql, { ...defaultOptions, breakOnKeywords: true });
+  const expected =
+    'SELECT\n    a.id,\n    b.name\nFROM dbo.TableA a\nINNER JOIN dbo.TableB b\n    ON a.id = b.id\n    AND a.tenant_id = b.tenant_id\n    OR a.is_admin = 1;\n';
+  assert.strictEqual(formatted, expected);
+});
+
+test('Multi-condition JOIN ... ON keeps AND/OR inline when breakOnKeywords: false', () => {
+  const sql =
+    'select a.id, b.name from dbo.TableA a inner join dbo.TableB b on a.id = b.id and a.tenant_id = b.tenant_id or a.is_admin = 1;';
+  const formatted = formatTsql(sql, { ...defaultOptions, breakOnKeywords: false });
+  const expected =
+    'SELECT\n    a.id,\n    b.name\nFROM dbo.TableA a\nINNER JOIN dbo.TableB b\n    ON a.id = b.id AND a.tenant_id = b.tenant_id OR a.is_admin = 1;\n';
+  assert.strictEqual(formatted, expected);
+});
+
+test('INSERT ... OUTPUT ... INTO ... VALUES formats OUTPUT on its own line', () => {
+  const sql =
+    'insert into dbo.AuditLog (col1, col2) output inserted.id, inserted.col1 into @audit_out values (1, 42);';
+  const formatted = formatTsql(sql, defaultOptions);
+  const expected =
+    'INSERT INTO dbo.AuditLog (col1, col2)\nOUTPUT inserted.id, inserted.col1 INTO @audit_out\nVALUES\n    (1, 42);\n';
+  assert.strictEqual(formatted, expected);
+});
+
+test('UPDATE ... SET ... OUTPUT ... INTO ... WHERE formats OUTPUT on its own line', () => {
+  const sql =
+    'update dbo.Users set status = 1 output inserted.id, deleted.status, inserted.status into @changes where id = 1;';
+  const formatted = formatTsql(sql, defaultOptions);
+  const expected =
+    'UPDATE dbo.Users\nSET status = 1\nOUTPUT inserted.id, deleted.status, inserted.status INTO @changes\nWHERE id = 1;\n';
+  assert.strictEqual(formatted, expected);
+});
+
+test('DELETE FROM ... OUTPUT ... INTO ... WHERE formats OUTPUT on its own line', () => {
+  const sql =
+    'delete from dbo.Users output deleted.id, deleted.name into @deleted_users where is_deleted = 1;';
+  const formatted = formatTsql(sql, defaultOptions);
+  const expected =
+    'DELETE FROM dbo.Users\nOUTPUT deleted.id, deleted.name INTO @deleted_users\nWHERE is_deleted = 1;\n';
+  assert.strictEqual(formatted, expected);
+});
+
+test('Modern SQL Server functions: APPROX_PERCENTILE_CONT, GREATEST, LEAST, DATETRUNC, GENERATE_SERIES', () => {
+  const sql =
+    'select approx_percentile_cont(0.5) within group (order by salary) over (partition by dept_id), greatest(c1, c2), least(c1, c2), datetrunc(month, order_date), value from generate_series(1, 100, 5);';
+  const formatted = formatTsql(sql, defaultOptions);
+  assert(
+    formatted.includes(
+      'APPROX_PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY salary) OVER(PARTITION BY dept_id)',
+    ),
+    'Expected APPROX_PERCENTILE_CONT',
+  );
+  assert(formatted.includes('GREATEST(c1, c2)'), 'Expected GREATEST');
+  assert(formatted.includes('LEAST(c1, c2)'), 'Expected LEAST');
+  assert(formatted.includes('DATETRUNC(month, order_date)'), 'Expected DATETRUNC');
+  assert(formatted.includes('GENERATE_SERIES(1, 100, 5)'), 'Expected GENERATE_SERIES');
+});
+
+test('Tombstone tokens are correctly skipped during lookahead and formatting under high load', () => {
+  // Construct 500 column expressions where comments precede commas, triggering tombstone marking
+  const cols = Array.from({ length: 500 }, (_, i) => `col${i} /* comment_${i} */`).join(' , ');
+  const sql = `SELECT ${cols} FROM dbo.T /* trailing */ ;`;
+  const t0 = performance.now();
+  const formatted = formatTsql(sql, defaultOptions);
+  const elapsed = performance.now() - t0;
+
+  assert(
+    formatted.startsWith('SELECT\n    col0,'),
+    'Should correctly format first column with comma',
+  );
+  assert(formatted.includes('FROM dbo.T;'), 'Should correctly format FROM clause after columns');
+  assert(formatted.includes('/* trailing */'), 'Should correctly preserve trailing comment');
+  assert(
+    elapsed < 200,
+    `Tombstone lookahead must be O(1) fast (took ${elapsed.toFixed(1)}ms, expected < 200ms)`,
+  );
+});
+
+// 3. Async non-blocking tests
 (async () => {
   await testAsync('formatTsqlAsync formats identically to formatTsql', async () => {
     const sql = `

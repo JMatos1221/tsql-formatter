@@ -411,6 +411,12 @@ export const KEYWORDS = new Set([
   'REPEATABLE',
   'READONLY',
   'OUT',
+  'APPROX_PERCENTILE_CONT',
+  'APPROX_PERCENTILE_DISC',
+  'GREATEST',
+  'LEAST',
+  'DATETRUNC',
+  'GENERATE_SERIES',
 ]);
 
 export const FUNCTIONS = new Set([
@@ -788,6 +794,7 @@ const MULTI_WORD_KEYWORDS: string[][] = [
   ['NOT', 'MATCHED'],
   ['BY', 'TARGET'],
   ['BY', 'SOURCE'],
+  ['WITH', 'TIES'],
 ];
 
 export interface MultiWordPattern {
@@ -808,6 +815,10 @@ for (const pattern of MULTI_WORD_KEYWORDS) {
   const group = MULTI_WORD_BY_FIRST_WORD.get(key);
   if (group) group.push(item);
   else MULTI_WORD_BY_FIRST_WORD.set(key, [item]);
+}
+
+for (const group of MULTI_WORD_BY_FIRST_WORD.values()) {
+  group.sort((a, b) => b.length - a.length);
 }
 
 // Words that can immediately follow WITH as a procedure/function/view
@@ -941,6 +952,7 @@ export const CLAUSE_KEYWORDS = new Set([
   'WHERE',
   'SET',
   'VALUES',
+  'INTO',
   'HAVING',
   'GROUP BY',
   'ORDER BY',
